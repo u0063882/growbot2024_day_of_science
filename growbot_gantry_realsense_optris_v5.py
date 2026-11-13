@@ -1380,7 +1380,12 @@ with results_col:
                 key="pointcloud_selection",
             )
             cloud_limit = st.slider("Maximum displayed 3D points",
-                                    min_value=3000, max_value=20000, value=12000, step=1000)
+                                    min_value=3000, max_value=30000, value=18000, step=1000)
+            cloud_point_size = st.slider("3D point size (pixels)",
+                                         min_value=2, max_value=10, value=5)
+            cloud_max_depth = st.slider("Maximum depth shown (m)",
+                                        min_value=0.5, max_value=3.0,
+                                        value=2.0, step=0.1)
             if st.session_state.show_3d_view:
                 try:
                     mask_full = None
@@ -1399,11 +1404,13 @@ with results_col:
                     points = pointcloud_data(
                         result["rgb"], result["depth"], result["color_intrinsics"],
                         result["depth_scale_m_per_unit"], point_limit=cloud_limit,
-                        mask=mask_full,
+                        depth_range_m=(0.15, cloud_max_depth), mask=mask_full,
                     )
-                    st.pydeck_chart(pointcloud_deck(points), use_container_width=True)
-                    st.caption(f"{len(points):,} RGB-coloured 3D points · "
-                               "aligned RealSense depth · metres")
+                    st.pydeck_chart(pointcloud_deck(points, point_size=cloud_point_size),
+                                    use_container_width=True)
+                    st.caption(f"{len(points):,} RGB-coloured depth points · "
+                               "camera-relative metres · drag to rotate, scroll to zoom. "
+                               "Initial view is auto-fitted; missing depth stays missing.")
                 except Exception as exc:
                     st.warning(f"3D point cloud unavailable: {exc}")
 
