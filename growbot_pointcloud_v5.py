@@ -56,21 +56,49 @@ def pointcloud_data(rgb, depth, intrinsics, depth_scale_m, point_limit=15000,
     })
 
 
-def pointcloud_deck(points):
-    """Return a PyDeck OrbitView; the browser renders a rotatable 3D view."""
+def pointcloud_deck(points, point_size=5):
+    """Make a camera-facing, auto-fitted PyDeck OrbitView of metric XYZ data.
+
+    In OrbitView 1 metre occupies 2**zoom screen pixels; the former zoom=6
+    rendered a 40-cm plant only ~26 pixels wide. Auto-fit fixes that.
+    """
     import pydeck as pdk
 
+    if points.empty:
+        raise ValueError("No valid point-cloud data to display")
+    coords = points[["x", "y", "z"]].to_numpy(dtype=np.float64)
+    if not np.isfinite(coords).all():
+        raise ValueError("Point cloud contains invalid XYZ coordinates")
+    span = np.percentile(coords, 97.5, axis=0) - np.percentile(
+        coords, 2.5, axis=0
+    )
+    visible_extent_m = max(float(np.max(span[:2])), float(span[2]) * 1.5, 0.05)
+    zoom = float(np.clip(np.log2(430.0 / visible_extent_m), 6.5, 12.0))
+
+    # XYZ are Cartesian metres relative to the camera, not WGS84 coordinates.
+    # Draw RGB values without a material/lighting tint on the measured pixels.
     layer = pdk.Layer(
-        "PointCloudLayer", data=points,
-        get_position="[x, y, z]", get_color="[r, g, b]",
-        get_normal=[0, 0, 1], point_size=3,
+        "PointCloudLayer",
+        data=points,
+        get_position=["x", "y", "z"],
+        get_color=["r", "g", "b"],
+        get_normal=[0, 0, 1],
+        point_size=int(point_size),
+        coordinate_system="cartesian",
+        material=False,
         pickable=False,
     )
     view = pdk.View(type="OrbitView", controller=True)
-    state = pdk.ViewState(target=[0, 0, 0], rotation_x=15,
-                          rotation_orbit=20, zoom=6)
-    return pdk.Deck(layers=[layer], views=[view], initial_view_state=state,
-                    tooltip=False)
+    state = pdk.ViewState(
+        target=[0, 0, 0],
+        rotation_x=0,
+        rotation_orbit=0,
+        zoom=zoom,
+    )
+    return pdk.Deck(
+        layers=[layer], views=[view], initial_view_state=state,
+        map_style=None, tooltip=False
+    )
 
 
 def estimate_scene_height_m(depth, depth_scale_m, foreground_mask=None):
