@@ -1,6 +1,6 @@
 # GROWBOT 2024 – Day of Science
 
-**Working v4 baseline** for the original Nerdland GROWBOT with OpenBuilds BLACKBOX XY gantry, RealSense D435i RGB/depth and Optris thermal camera. The original Python v4 application and Windows launcher are included unmodified. Future feature development (improved plant segmentation, 3D point-cloud view) should be done on separate branches.
+**Working v4 baseline** for the original Nerdland GROWBOT with OpenBuilds BLACKBOX XY gantry, RealSense D435i RGB/depth and Optris thermal camera. The tested Python v4 application and Windows launcher are included unchanged. Future feature development (improved plant segmentation, 3D point-cloud view) should be done on separate branches.
 
 ## Running on the existing Windows PC
 
@@ -35,7 +35,7 @@ Copy from the original GROWBOT project or a properly licensed Optris SDK install
 - `irDirectSDK/sdk/x64/libirimager.dll` plus any companion SDK files
 - `Califiles SN18082084/` (calibration for the original camera)
 
-Camera-specific files, DLLs and installers are excluded from version control through `.gitignore`. This repository **does include** the original 35 plant icons and UI logos, along with `utils.py`, to allow the Streamlit UI and green-mask model to load without copying those assets manually.
+Camera-specific files, DLLs and installers are excluded from version control through `.gitignore`. The Python source files are committed, but the original **35 plant icons and UI logos still need to be uploaded** from the working local project. For now, copy `plant icons/`, `mebios.png`, `growbot_logo.png`, `logo KUL.png`, and `logo_600jr.png` into the project folder before launching the UI. They are ordinary UI assets and can later be committed to the public repository.
 
 ## Files
 
@@ -43,7 +43,7 @@ Camera-specific files, DLLs and installers are excluded from version control thr
 - `Start_GROWBOT.bat`: Windows double-click launcher for `growbot2024`.
 - `utils.py`: original Nerdland HSV green-mask segmentation helper (unchanged).
 - `growbot_optris_backend.py`: optional local Optris SDK adapter.
-- `plant icons/`: 35 plant selection images.
+- `plant icons/`: 35 plant selection images (currently local only; upload from working PC).
 - `requirements.txt`: pinned 2024 Python dependencies.
 
 ## Safety / compatibility
