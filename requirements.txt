@@ -1,0 +1,11 @@
+# GROWBOT 2024 main application: minimal direct Python dependencies
+# Reproducibility baseline: Windows 64-bit, CPython 3.10
+# Versions transcribed from archived requirements.txt; not live-tested on hardware.
+# Optris SDK and Microsoft VC++ 2013 x64 runtime must be installed separately.
+streamlit==1.33.0
+st-clickable-images==0.0.3
+pyserial==3.5
+pyrealsense2==2.54.2.5684
+opencv-python==4.9.0.80
+numpy==1.26.4
+matplotlib==3.8.4
