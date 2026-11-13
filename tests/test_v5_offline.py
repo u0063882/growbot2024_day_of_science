@@ -3,6 +3,8 @@
 No camera, GRBL connection, Streamlit server or hardware movement required.
 """
 import unittest
+import ast
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -107,6 +109,34 @@ class VariegatedSegmentationTests(unittest.TestCase):
         self.assertGreater(mask[220, 470], 0)  # yellow margin
         self.assertEqual(mask[20, 20], 0)  # brown background
         self.assertGreater(data['enhanced_pixels'], 0)
+
+
+
+class CaptureSequenceSourceTests(unittest.TestCase):
+    """Inspect the application without importing Streamlit or touching hardware."""
+
+    def test_realsense_is_captured_before_optris_offset_move(self):
+        path = Path(__file__).resolve().parents[1] / "growbot_gantry_realsense_optris_v5.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        fn = next(node for node in tree.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "perform_capture")
+        statements = ast.get_source_segment(path.read_text(encoding="utf-8"), fn)
+        rgb_at = statements.index("bgr, depth = camera.capture()")
+        offset_move_at = statements.index("controller.move_machine_xy(")
+        optris_at = statements.index("thermal_camera.capture(frames=3)")
+        self.assertLess(rgb_at, offset_move_at)
+        self.assertLess(offset_move_at, optris_at)
+        self.assertIn("if thermal_connected and apply_optris_offset:", statements)
+        self.assertIn("optris_target = mapping.optris_machine_xy(", statements)
+
+    def test_plant_click_validates_thermal_target_before_motor_motion(self):
+        path = Path(__file__).resolve().parents[1] / "growbot_gantry_realsense_optris_v5.py"
+        code = path.read_text(encoding="utf-8")
+        call = code.index("mapping.optris_machine_xy(", code.index("selected_from_click = None"))
+        motor = code.index("box.move_machine_xy(target_x, target_y, feed)", call)
+        self.assertLess(call, motor)
+        self.assertIn("apply_optris_offset=True", code)
 
 
 if __name__ == '__main__':
