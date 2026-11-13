@@ -71,3 +71,45 @@ def pointcloud_deck(points):
                           rotation_orbit=20, zoom=6)
     return pdk.Deck(layers=[layer], views=[view], initial_view_state=state,
                     tooltip=False)
+
+
+def estimate_scene_height_m(depth, depth_scale_m, foreground_mask=None):
+    """Estimate height above the surrounding scene surface using depth percentiles.
+
+    This is a simple camera-facing relative-height proxy, not a calibrated
+    plant-height measurement. Assumes the border contains visible tabletop/
+    background at approximately the same camera-to-surface distance.
+
+    Returns None if there is insufficient valid depth. No SDK or motion calls.
+    """
+    if depth.ndim != 2 or depth_scale_m <= 0:
+        return None
+    h, w = depth.shape
+    if h < 30 or w < 30:
+        return None
+    d = depth.astype(np.float32) * float(depth_scale_m)
+    valid = np.isfinite(d) & (d >= 0.1) & (d <= 5.0)
+
+    border = np.zeros((h, w), dtype=bool)
+    bh = max(4, int(round(0.12 * h)))
+    bw = max(4, int(round(0.12 * w)))
+    border[:bh, :] = True
+    border[-bh:, :] = True
+    border[:, :bw] = True
+    border[:, -bw:] = True
+
+    center = np.zeros((h, w), dtype=bool)
+    center[int(0.18*h):int(0.82*h), int(0.25*w):int(0.75*w)] = True
+    subject = valid & center
+    if foreground_mask is not None and foreground_mask.shape == depth.shape:
+        masked = subject & (foreground_mask != 0)
+        if np.count_nonzero(masked) >= 60:
+            subject = masked
+
+    bg = d[valid & border]
+    fg = d[subject]
+    if bg.size < 200 or fg.size < 60:
+        return None
+    background_depth = float(np.percentile(bg, 85))
+    foreground_depth = float(np.percentile(fg, 15))
+    return max(0.0, background_depth - foreground_depth)
