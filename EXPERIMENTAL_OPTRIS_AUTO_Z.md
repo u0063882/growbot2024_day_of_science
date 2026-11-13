@@ -25,7 +25,7 @@ If the depth mask is missing or untrustworthy, the system does **not lower Z**. 
 - Original controller reports `$132=110 mm`, *not* 150 mm. The existing confirmed Z home was `MPos Z=-1 mm`.
 - Experiment restricts automatic Z to **0–100 mm down from home**, so Z targets are between **-101 and -1 mm machine coordinates**.
 - Z speed fixed at **600 mm/min**; no GRBL configuration changes.
-- Adjustable Optris desired leaf standoff (default **450 mm**), measured optical-centre relative height (default **0 mm**; must be calibrated), max drop (default 100 mm), and nearest-leaf clearance (default **300 mm**).
+- Adjustable Optris desired leaf standoff (default **450 mm**), measured optical-centre relative height (default **0 mm**; must be calibrated), max drop (**default 10 mm for the first supervised test**, adjustable up to 100 mm), and nearest-leaf clearance (default **300 mm**).
 - Foreground depth must have enough valid pixels, reasonable spread, and a plausible real plant mask. Invalid input produces a **0 mm movement**.
 - The 10th percentile of segmented canopy distance limits descent to preserve a conservative estimated near-leaf clearance.
 - Automatic mode is off by default and requires explicit operator acknowledgement. Changing standoff settings disarms one-click acquisition.
