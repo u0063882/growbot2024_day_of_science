@@ -53,3 +53,50 @@ python -m unittest discover -s tests -v
 The tests use synthetic images and fake aligned depth, so they do **not** connect a camera, open COM4 or move the gantry.
 
 Tested offline: a pale flower touching a green plant on brown/black background, an empty scene fallback, RGB/depth back-projection shape and invalid intrinsic handling. Hardware-side accuracy and browser rendering still need validation.
+
+
+## Update: row-wise plant numbering and dual-position imaging
+
+The **displayed 7 × 5 grid now numbers plants row by row**:
+
+```text
+  1   2   3   4   5   6   7
+  8   9  10  11  12  13  14
+ 15  16  17  18  19  20  21
+ 22  23  24  25  26  27  28
+ 29  30  31  32  33  34  35
+```
+
+The numeric labels are rendered into copies of the existing plant icon in memory; the original PNGs are untouched. **The physical 35 XY destinations have not been redefined.** For example, row-major plant 2 corresponds to the original column-major plant 6. When disk saving is enabled, metadata includes both numbering schemes.
+
+### Adjustable Optris XY offset
+
+Under **Capture settings → Optris XY camera offset**, enter X and Y displacements in **millimetres** (each defaults to 0; allowed inputs −400 to +400). These are signed **machine-coordinate** offsets, not screen pixels. Use a small offset first and check the path. Editing either value automatically **disarms one-click movement**, requiring you to acknowledge the new path again.
+
+For a plant click, the sequence is:
+
+1. Validate both the plant position **and** proposed Optris position against the configured XY axis limits; never start if either endpoint is invalid
+2. Move to the original physical plant location and settle
+3. Capture RealSense RGB and aligned depth at that location
+4. If Optris is connected and X/Y offset is nonzero, move to the **plant position + offset**, then settle
+5. Capture Optris thermal frames; display all results together
+
+**0,0 means both cameras capture at the same gantry position**, without a second motion. If Optris is disconnected and not required, no thermal offset movement is performed. **Manual "Capture at current position" never moves**, regardless of the offset settings. The gantry **remains at the Optris position after capture**, it does not automatically move back to the RealSense position. Neither homing nor Z movement was altered.
+
+The returned measurement records the two distinct machine positions and the applied XY offset. This allows checking image provenance when the thermal and RGB views are taken from different locations. It does **not** optically align the thermal and RGB images.
+
+### Variegated ornamental plants
+
+An **Experimental plant mask** selector now offers **Variegated / pale-edged** and **Green foliage + pale flowers**. The variegated approach uses the **full RealSense image** rather than the old 2024 crop, with central foreground modelling for teal/dark leaf interiors and yellow/cream margins. The original green-only mask and biomass calculation are unchanged, and the former "Enhanced / original mask area" metric has been removed.
+
+The variegated approach was visually inspected on the provided snake-plant example. It recovers the main dark/cream leaves, but still includes some neighbouring plant pixels, so it should be treated as **experimental**, not a species-independent calibrated segmentation.
+
+### Safety and testing
+
+- The stable `main` branch and `Start_GROWBOT.bat` retain the working v4 hardware behavior (the previously requested saving and thermal-display defaults were applied separately to both branches)
+- `Start_GROWBOT_v5.bat` runs only the experimental v5 application
+- `growbot_mapping_v5.py` isolates 2024 destination mapping, the new row-major numbering and Optris target validation for hardware-free testing
+- `tests/test_v5_offline.py` includes grid position invariance, offset limits, variegated leaves and capture-order checks
+- GitHub Actions runs syntax and offline tests on feature-branch pushes; this does not verify hardware movement or the optical offset calibration
+
+**First hardware test:** Set the Optris offset to **0,0** and confirm normal capture. Next choose a plant with adequate clearance, use a small X/Y displacement, check both displayed capture positions, and only then increase the offset.
