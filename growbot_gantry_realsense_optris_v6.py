@@ -967,7 +967,7 @@ for name, value in (
     ("optris_z_mode", "Off"),
     ("z_target_distance_mm", 450),
     ("z_camera_height_offset_mm", 0),
-    ("z_max_lowering_mm", 100),
+    ("z_max_lowering_mm", 10),
     ("z_min_clearance_mm", 300),
     ("z_clearance_confirmed", False),
     ("optris_offset_y_mm", 5.0),
