@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from growbot_segmentation_v5 import enhanced_plant_mask
-from growbot_pointcloud_v5 import pointcloud_data
+from growbot_pointcloud_v5 import pointcloud_data, estimate_scene_height_m
 from growbot_segmentation_v5 import variegated_plant_mask
 from growbot_mapping_v5 import (
     GRID_COLUMNS, GRID_ROWS, legacy_plant_number, plant_offset_mm,
@@ -74,13 +74,14 @@ class RowMajorAndOffsetTests(unittest.TestCase):
         self.assertEqual(len(set(plant_offset_mm(i) for i in range(1, 36))), 35)
 
     def test_labels_are_1_to_7_then_8_to_14(self):
-        self.assertEqual(legacy_plant_number(1), 1)
-        self.assertEqual(legacy_plant_number(2), 6)
-        self.assertEqual(legacy_plant_number(7), 31)
-        self.assertEqual(legacy_plant_number(8), 2)
-        self.assertEqual(plant_offset_mm(7), (220.0, -240.0))
-        self.assertEqual(plant_offset_mm(8), (940.0, -460.0))
-        self.assertEqual(plant_offset_mm(35), (220.0, -1120.0))
+        self.assertEqual(legacy_plant_number(1), 31)
+        self.assertEqual(legacy_plant_number(2), 26)
+        self.assertEqual(legacy_plant_number(7), 1)
+        self.assertEqual(legacy_plant_number(8), 32)
+        self.assertEqual(plant_offset_mm(1), (220.0, -240.0))
+        self.assertEqual(plant_offset_mm(7), (940.0, -240.0))
+        self.assertEqual(plant_offset_mm(8), (220.0, -460.0))
+        self.assertEqual(plant_offset_mm(35), (940.0, -1120.0))
 
     def test_zero_and_small_offsets(self):
         plant = plant_machine_xy(1)
@@ -138,6 +139,37 @@ class CaptureSequenceSourceTests(unittest.TestCase):
         self.assertLess(call, motor)
         self.assertIn("apply_optris_offset=True", code)
 
+
+
+class SceneHeightTests(unittest.TestCase):
+    def test_scene_height_relative_to_background(self):
+        # Surrounding tabletop at 1 m, selected central plant at 0.7 m.
+        depth = np.full((120, 160), 1000, dtype=np.uint16)
+        depth[35:85, 55:105] = 700
+        mask = np.zeros_like(depth, dtype=np.uint8)
+        mask[35:85, 55:105] = 255
+        h = estimate_scene_height_m(depth, 0.001, mask)
+        self.assertIsNotNone(h)
+        self.assertAlmostEqual(h, 0.3, delta=0.005)
+
+    def test_empty_depth_cannot_claim_height(self):
+        depth = np.zeros((120, 160), dtype=np.uint16)
+        self.assertIsNone(estimate_scene_height_m(depth, 0.001))
+
+
+class DashboardDefaultsSourceTests(unittest.TestCase):
+    def test_requested_display_defaults_and_no_original_mask_image(self):
+        code = (Path(__file__).resolve().parents[1]
+                / "growbot_gantry_realsense_optris_v5.py").read_text(encoding="utf-8")
+        self.assertIn('DEFAULT_FEED_MM_MIN = 2500', code)
+        self.assertIn('MAX_FEED_MM_MIN = 3600', code)
+        self.assertIn('("optris_offset_x_mm", 5.0)', code)
+        self.assertIn('("optris_offset_y_mm", 0.0)', code)
+        self.assertIn('("thermal_fixed_range_c", (18.0, 23.0))', code)
+        self.assertIn('st.image(result["enhanced_segmentation"]', code)
+        self.assertNotIn('st.image(result["segmentation"]', code)
+        self.assertIn('st.metric("Scene height (estimate)"', code)
+        self.assertIn('st.metric("Scene temperature · median"', code)
 
 if __name__ == '__main__':
     unittest.main()
