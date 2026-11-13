@@ -1,7 +1,8 @@
 """Pure, hardware-free mapping for the original Nerdland 7 x 5 gantry.
 
 Public plant numbers are now row-major (1-7 on top, then 8-14, ... 29-35).
-Physical machine destinations remain exactly those of the original 2024 grid.
+Physical machine destinations remain exactly the original 2024 grid,
+but the displayed columns are mirrored so plant 1 is top left.
 """
 from __future__ import annotations
 
@@ -25,13 +26,14 @@ def grid_row_col(plant_number: int) -> tuple[int, int]:
 def legacy_plant_number(plant_number: int) -> int:
     """Previous column-major number at this physical position."""
     row, column = grid_row_col(plant_number)
-    return 1 + column * GRID_ROWS + row
+    return 1 + (GRID_COLUMNS - 1 - column) * GRID_ROWS + row
 
 
 def plant_offset_mm(plant_number: int) -> tuple[float, float]:
     """Original G54 XY offsets, now addressed by row-major plant ID."""
     row, column = grid_row_col(plant_number)
-    return (FIRST_X_MM + column * COLUMN_PITCH_MM,
+    physical_column = GRID_COLUMNS - 1 - column
+    return (FIRST_X_MM + physical_column * COLUMN_PITCH_MM,
             FIRST_Y_MM + row * ROW_PITCH_MM)
 
 
