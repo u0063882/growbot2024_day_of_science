@@ -15,8 +15,11 @@ def enhanced_plant_mask(
     depth: np.ndarray | None = None,
     depth_scale_m: float = 0.001,
     pale_min_value: int = 150,
+    variegated: bool = False,
 ) -> tuple[np.ndarray, dict]:
     """Return uint8 mask (0/255) and diagnostics; no image/file side effects."""
+    if variegated:
+        return variegated_plant_mask(bgr, depth, depth_scale_m)
     if bgr.ndim != 3 or bgr.shape[2] != 3 or bgr.dtype != np.uint8:
         raise ValueError("Expected uint8 BGR image (height, width, 3)")
     h, w = bgr.shape[:2]
@@ -135,3 +138,122 @@ def segmented_rgb(bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     out = np.full_like(rgb, 255)
     out[mask > 0] = rgb[mask > 0]
     return out
+
+
+def variegated_plant_mask(
+    bgr: np.ndarray,
+    depth: np.ndarray | None = None,
+    depth_scale_m: float = 0.001,
+) -> tuple[np.ndarray, dict]:
+    """Experimental *centred* variegated-plant mask.
+
+    Handles dark teal foliage plus cream/yellow margins that green-pixel
+    masking omits. The 2024 model is never changed. Adjacent plants can still
+    leak into the mask; visually inspect it before interpreting any area.
+    """
+    if bgr.ndim != 3 or bgr.shape[2] != 3 or bgr.dtype != np.uint8:
+        raise ValueError("Expected uint8 BGR image (height, width, 3)")
+    h, w = bgr.shape[:2]
+    if h < 20 or w < 20:
+        raise ValueError("Image too small")
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    hue, sat, val = cv2.split(hsv)
+    blue, green, red = (bgr[:, :, i].astype(np.int16) for i in range(3))
+    yy, xx = np.mgrid[0:h, 0:w]
+
+    # Central ROI is intended for the selected plant at the camera station.
+    # It reduces unrelated plants at the sides of the wider RealSense frame.
+    focus = ((xx >= .275 * w) & (xx <= .825 * w)
+             & (yy >= 0) & (yy <= .84 * h))
+    core = (((xx - .53 * w) / (.19 * w)) ** 2
+            + ((yy - .47 * h) / (.26 * h)) ** 2 <= 1)
+
+    # Teal/blue-green interiors occur in many variegated ornamental leaves.
+    foliage_green = ((hue >= 27) & (hue <= 112)
+                     & (sat >= 24) & (val >= 32) & (green >= red - 6))
+    teal = ((hue >= 70) & (hue <= 122) & (sat >= 16)
+            & (val >= 30) & (blue >= red - 12) & (green >= red - 9))
+    foliage = focus & (foliage_green | teal)
+    pale_yellow = ((hue >= 15) & (hue <= 48)
+                   & (sat >= 20) & (sat <= 175)
+                   & (val >= 115) & (green > blue + 6))
+    trusted = foliage & core
+
+    # Grow model from a centred core, rather than selecting every green pixel
+    # in the entire field of view.
+    gc = np.full((h, w), cv2.GC_PR_BGD, dtype=np.uint8)
+    gc[~focus] = cv2.GC_BGD
+    gc[core] = cv2.GC_PR_FGD
+    wood = ((hue < 25) & (sat > 18) & (val > 55) & (red > green))
+    dark = val < 40
+    gc[(wood | dark) & ~core] = cv2.GC_BGD
+    margin_y = max(3, h // 90)
+    margin_x = max(3, w // 90)
+    gc[:margin_y, :] = cv2.GC_BGD
+    gc[-margin_y:, :] = cv2.GC_BGD
+    gc[:, :margin_x] = cv2.GC_BGD
+    gc[:, -margin_x:] = cv2.GC_BGD
+    trusted[:margin_y, :] = False
+    trusted[-margin_y:, :] = False
+    trusted[:, :margin_x] = False
+    trusted[:, -margin_x:] = False
+    gc[trusted] = cv2.GC_FGD
+    if np.count_nonzero(gc == cv2.GC_FGD) < 40:
+        trusted = foliage & (
+            ((xx - .53 * w) / (.27 * w)) ** 2
+            + ((yy - .45 * h) / (.37 * h)) ** 2 < 1
+        )
+        gc[trusted] = cv2.GC_FGD
+    if np.count_nonzero(gc == cv2.GC_FGD) < 40:
+        return np.zeros((h, w), dtype=np.uint8), {
+            "status": "No central variegated/green seed",
+            "enhanced_pixels": 0,
+        }
+
+    # The depth image is deliberately not used as a hard foreground mask.
+    # Transparent/reflective or dark leaf surfaces often lack valid disparity.
+    try:
+        cv2.grabCut(bgr, gc, None,
+                    np.zeros((1, 65), np.float64),
+                    np.zeros((1, 65), np.float64),
+                    5, cv2.GC_INIT_WITH_MASK)
+        foreground = ((gc == cv2.GC_FGD) | (gc == cv2.GC_PR_FGD))
+        status = "Centred variegated colour + GrabCut"
+    except cv2.error:
+        foreground = foliage.copy()
+        status = "Variegated colour fallback (GrabCut unavailable)"
+
+    # Fill cream/yellow leaf margins only adjacent to coloured leaf centres.
+    distance = cv2.distanceTransform((~foliage).astype(np.uint8),
+                                     cv2.DIST_L2, 3)
+    foreground |= (pale_yellow & (distance < 24))
+    foreground |= trusted
+    # Remove background-like colours from GrabCut's uncertain foreground.
+    admissible = (foliage | pale_yellow
+                  | ((hue >= 23) & (hue <= 120)
+                     & (sat >= 14) & (val >= 42)))
+    foreground &= admissible & focus & (val >= 42)
+
+    mask = cv2.morphologyEx(foreground.astype(np.uint8),
+                            cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+    output = np.zeros((h, w), dtype=np.uint8)
+    for idx in range(1, count):
+        component = labels == idx
+        area = int(stats[idx, cv2.CC_STAT_AREA])
+        centroid = centroids[idx]
+        anchored = np.count_nonzero(component & trusted) >= 12
+        near_centre = (
+            ((centroid[0] - .53 * w) / (.32 * w)) ** 2
+            + ((centroid[1] - .47 * h) / (.37 * h)) ** 2 < 1
+        )
+        if area >= 30 and (anchored or (near_centre and area > 400)):
+            output[component] = 255
+
+    return output, {
+        "status": status,
+        "enhanced_pixels": int(np.count_nonzero(output)),
+        "green_seed_pixels": int(np.count_nonzero(foliage)),
+        "depth_prior_used": False,
+        "focus": "central 55% width; 84% height",
+    }
