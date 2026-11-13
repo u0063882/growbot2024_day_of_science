@@ -24,7 +24,7 @@ Double-click **`Start_GROWBOT_v5.bat`** to launch the experiment. To return to t
 ### Shared with `main` (v4 and v5)
 
 - **Save captures to disk** is **off** on a fresh Streamlit session. You may turn it on under *Capture settings*. Results still appear onscreen when saving is off.
-- Optris display colour limits are **fixed at 10–45 °C by default** for a wider range. Under *Thermal display*, optionally turn on **Auto-scale (2nd–98th percentile)**, or adjust the fixed range.
+- Optris display colour limits are **fixed at 18–23 °C by default on experimental v5** (10–45 °C on stable v4). Under *Thermal display*, optionally turn on **Auto-scale (2nd–98th percentile)**, or adjust the fixed range.
 - These controls affect **display only**, not the raw thermal temperatures, GRBL settings, acquisition hardware or segmentation model.
 
 ### Experimental v5 only
@@ -67,11 +67,11 @@ The **displayed 7 × 5 grid now numbers plants row by row**:
  29  30  31  32  33  34  35
 ```
 
-The numeric labels are rendered into copies of the existing plant icon in memory; the original PNGs are untouched. **The physical 35 XY destinations have not been redefined.** For example, row-major plant 2 corresponds to the original column-major plant 6. When disk saving is enabled, metadata includes both numbering schemes.
+The numeric labels are rendered into copies of the existing plant icon in memory; the original PNGs are untouched. **The physical 35 XY destinations have not been redefined.** The row-major labels are mirrored left-to-right relative to the original physical column ordering: **plant 1 is the top-left physical station**, and plant 7 is top-right. When disk saving is enabled, metadata includes both numbering schemes.
 
 ### Adjustable Optris XY offset
 
-Under **Capture settings → Optris XY camera offset**, enter X and Y displacements in **millimetres** (each defaults to 0; allowed inputs −400 to +400). These are signed **machine-coordinate** offsets, not screen pixels. Use a small offset first and check the path. Editing either value automatically **disarms one-click movement**, requiring you to acknowledge the new path again.
+Under **Capture settings → Optris XY camera offset**, enter X and Y displacements in **millimetres** (**defaults X = 0, Y = +5 mm**; allowed inputs −400 to +400). These are signed **machine-coordinate** offsets, not screen pixels. Use a small offset first and check the path. Editing either value automatically **disarms one-click movement**, requiring you to acknowledge the new path again.
 
 For a plant click, the sequence is:
 
@@ -99,4 +99,13 @@ The variegated approach was visually inspected on the provided snake-plant examp
 - `tests/test_v5_offline.py` includes grid position invariance, offset limits, variegated leaves and capture-order checks
 - GitHub Actions runs syntax and offline tests on feature-branch pushes; this does not verify hardware movement or the optical offset calibration
 
-**First hardware test:** Set the Optris offset to **0,0** and confirm normal capture. Next choose a plant with adequate clearance, use a small X/Y displacement, check both displayed capture positions, and only then increase the offset.
+**First hardware test:** Verify the top-left plant target with the gantry path clear and inspect the configured X = 0, Y = +5 mm thermal move. If needed, temporarily set the offset to 0,0 to confirm a same-position capture before enabling an offset.
+
+
+## Dashboard and point-cloud adjustments (November 2026)
+
+- Only the **Experimental v5: Variegated / pale-edged** segmentation preview is shown alongside the RGB, depth and thermal frames. The original HSV mask is still used internally for the historical biomass proxy (and remains available for the optional masked point-cloud view); it is not separately shown on the main dashboard.
+- Three **main metrics**: historical biomass proxy (g), **scene height estimate** (cm) relative to surrounding surface, and median scene thermal temperature (°C). Scene height uses robust percentiles of background and visible foreground depth; **it is not a calibrated plant-height measurement** and can be biased by neighbouring pots, occlusion and invalid depth.
+- Thermal fixed colour range now defaults to **18–23 °C**; auto-scale remains optional. The default Optris translation is **X = 0 mm, Y = +5 mm**, only during plant-click acquisition. Manual capture at current location never moves.
+- XY speed slider now permits requested G-code feeds **200–3600 mm/min**, initially **2500 mm/min**. The confirmed GRBL `$110=$111=2500 mm/min` firmware maxima remain unchanged. Commands over 2500 mm/min **do not automatically increase axis motor speeds past those limits**. No GRBL firmware parameters were altered.
+- 3D RGB point cloud now uses an **auto-fitted Cartesian OrbitView**. Previously, zoom=6 showed a 40-cm plant only ~26 pixels wide; the auto-fit uses the cloud's metric extent to choose an appropriate initial zoom. Adjustable 3D point size and maximum depth are available. Camera orientation starts approximately frontal. Rendering remains experimental and may require a GPU/WebGL-capable browser..
