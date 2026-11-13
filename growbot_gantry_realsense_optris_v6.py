@@ -811,6 +811,7 @@ def perform_capture(plant_number: int | None,
                         raise RuntimeError(f"Unexpected Z after retract: {actual[2]:.2f} mm")
                 except Exception as exc:
                     st.session_state.enable_grid = False
+                    st.session_state.z_clearance_confirmed = False
                     z_retraction_confirmed = False
                     raise RuntimeError(
                         "Z RETRACTION NOT VERIFIED. Do not command XY travel. "
@@ -926,6 +927,7 @@ def disconnect_all() -> None:
             errors.append(f"BLACKBOX: {exc}")
 
     st.session_state.enable_grid = False
+    st.session_state.z_clearance_confirmed = False
     st.session_state.selected_plant = None
     st.session_state.plant_click_epoch += 1
     # Keep last_result available to inspect or save after disconnecting.
@@ -999,6 +1001,7 @@ def disarm_on_z_change() -> None:
 def disarm_on_offset_change() -> None:
     # A changed two-stop movement path must be explicitly re-acknowledged.
     st.session_state.enable_grid = False
+    st.session_state.z_clearance_confirmed = False
     st.session_state.notice = (
         "warning",
         "Optris XY offset changed. Check the new path and re-enable one-click acquisition.",
@@ -1040,6 +1043,7 @@ with st.sidebar:
         try:
             st.session_state.blackbox = BlackBox()
             st.session_state.enable_grid = False
+            st.session_state.z_clearance_confirmed = False
             st.session_state.feedback = "BLACKBOX connected. Home before movement."
             st.rerun()
         except Exception as exc:
@@ -1052,6 +1056,7 @@ with st.sidebar:
             box.close()
             st.session_state.blackbox = None
             st.session_state.enable_grid = False
+            st.session_state.z_clearance_confirmed = False
             st.session_state.plant_click_epoch += 1
             st.rerun()
         except Exception as exc:
@@ -1269,6 +1274,8 @@ with selector_col:
         try:
             with st.spinner("Homing all configured axes; monitor gantry"):
                 response = box.home()
+            st.session_state.enable_grid = False
+            st.session_state.z_clearance_confirmed = False
             st.session_state.feedback = "Homing completed: " + response
             st.rerun()
         except Exception as exc:
