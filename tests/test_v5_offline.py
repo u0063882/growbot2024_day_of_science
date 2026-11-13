@@ -9,6 +9,11 @@ import numpy as np
 
 from growbot_segmentation_v5 import enhanced_plant_mask
 from growbot_pointcloud_v5 import pointcloud_data
+from growbot_segmentation_v5 import variegated_plant_mask
+from growbot_mapping_v5 import (
+    GRID_COLUMNS, GRID_ROWS, legacy_plant_number, plant_offset_mm,
+    plant_machine_xy, optris_machine_xy,
+)
 
 
 class EnhancedSegmentationTests(unittest.TestCase):
@@ -48,6 +53,60 @@ class PointCloudTests(unittest.TestCase):
         depth = np.ones((20, 20), dtype=np.uint16)
         with self.assertRaises(ValueError):
             pointcloud_data(rgb, depth, None, 0.001)
+
+
+
+class RowMajorAndOffsetTests(unittest.TestCase):
+    def test_row_major_labels_preserve_every_2024_destination(self):
+        self.assertEqual(GRID_COLUMNS, 7)
+        self.assertEqual(GRID_ROWS, 5)
+        # Prior code used original 1..35 IDs in column-major order.
+        old_positions = {}
+        for old_id in range(1, 36):
+            column, row = divmod(old_id - 1, 5)
+            old_positions[old_id] = (940.0 - 120.0 * column,
+                                      -240.0 - 220.0 * row)
+        for new_id in range(1, 36):
+            old_id = legacy_plant_number(new_id)
+            self.assertEqual(plant_offset_mm(new_id), old_positions[old_id])
+        self.assertEqual(len(set(plant_offset_mm(i) for i in range(1, 36))), 35)
+
+    def test_labels_are_1_to_7_then_8_to_14(self):
+        self.assertEqual(legacy_plant_number(1), 1)
+        self.assertEqual(legacy_plant_number(2), 6)
+        self.assertEqual(legacy_plant_number(7), 31)
+        self.assertEqual(legacy_plant_number(8), 2)
+        self.assertEqual(plant_offset_mm(7), (220.0, -240.0))
+        self.assertEqual(plant_offset_mm(8), (940.0, -460.0))
+        self.assertEqual(plant_offset_mm(35), (220.0, -1120.0))
+
+    def test_zero_and_small_offsets(self):
+        plant = plant_machine_xy(1)
+        self.assertEqual(optris_machine_xy(plant, (0, 0)), plant)
+        self.assertEqual(optris_machine_xy(plant, (50, -40)),
+                         (plant[0] + 50, plant[1] - 40))
+
+    def test_invalid_thermal_target_rejected_before_travel(self):
+        plant = plant_machine_xy(1)
+        with self.assertRaises(ValueError):
+            optris_machine_xy(plant, (-1000, 0))
+        with self.assertRaises(ValueError):
+            optris_machine_xy(plant, (0, 500))
+
+
+class VariegatedSegmentationTests(unittest.TestCase):
+    def test_teal_centres_and_pale_leaf_margins(self):
+        # Brown background and a centred dark blue-green leaf with pale rims.
+        bgr = np.full((480, 640, 3), (140, 170, 185), dtype=np.uint8)
+        cv2.ellipse(bgr, (320, 220), (150, 130), 20, 0, 360,
+                    (80, 195, 225), thickness=-1)
+        cv2.ellipse(bgr, (320, 220), (138, 116), 20, 0, 360,
+                    (105, 95, 62), thickness=-1)
+        mask, data = variegated_plant_mask(bgr)
+        self.assertGreater(mask[220, 320], 0)  # dark teal centre
+        self.assertGreater(mask[220, 470], 0)  # yellow margin
+        self.assertEqual(mask[20, 20], 0)  # brown background
+        self.assertGreater(data['enhanced_pixels'], 0)
 
 
 if __name__ == '__main__':
