@@ -500,6 +500,9 @@ def make_result(
     use_legacy_roi: bool,
     thermal_auto_scale: bool = False,
     thermal_fixed_range_c: tuple[float, float] = (10.0, 45.0),
+    thermal_mpos: tuple[float, float, float] | None = None,
+    optris_offset_mm: tuple[float, float] = (0.0, 0.0),
+    enhanced_mode: str = "Variegated / pale-edged",
 ) -> dict:
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     top, bottom, left, right = LEGACY_RGB_ROI
@@ -507,15 +510,23 @@ def make_result(
     # utils.create_mask expects BGR and returns an RGB segmentation.
     segmentation, mask = create_mask(roi_bgr)
     # Experimental segmentation is display-only; original biomass stays intact.
+    # The variegated mode sees the complete RealSense frame, so long cream
+    # leaves are not clipped by the fixed original 2024 biomass ROI.
+    is_variegated = enhanced_mode == "Variegated / pale-edged"
+    enhanced_bgr = bgr if is_variegated else roi_bgr
     roi_depth = depth[top:bottom, left:right] if use_legacy_roi else depth
+    enhanced_depth = depth if is_variegated else roi_depth
+    enhanced_roi_bounds = (None if is_variegated or not use_legacy_roi
+                           else (top, bottom, left, right))
     try:
         enhanced_mask, enhanced_info = enhanced_plant_mask(
-            roi_bgr, roi_depth, camera.depth_scale
+            enhanced_bgr, enhanced_depth, camera.depth_scale,
+            variegated=is_variegated,
         )
-        enhanced_segmentation = segmented_rgb(roi_bgr, enhanced_mask)
+        enhanced_segmentation = segmented_rgb(enhanced_bgr, enhanced_mask)
     except Exception as exc:
-        enhanced_mask = np.zeros_like(mask)
-        enhanced_segmentation = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB)
+        enhanced_mask = np.zeros(enhanced_bgr.shape[:2], np.uint8)
+        enhanced_segmentation = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2RGB)
         enhanced_info = {"status": f"Enhanced segmentation failed: {exc}",
                          "enhanced_pixels": 0}
     biomass_proxy = round(float(np.count_nonzero(mask)) * LEGACY_BIOMASS_FACTOR_G_PER_PIXEL, 2)
@@ -530,12 +541,19 @@ def make_result(
         "enhanced_mask": enhanced_mask,
         "enhanced_segmentation": enhanced_segmentation,
         "enhanced_info": enhanced_info,
+        "enhanced_mode": enhanced_mode,
+        "enhanced_roi_bounds": enhanced_roi_bounds,
         "roi_bounds": (top, bottom, left, right) if use_legacy_roi else None,
         "color_intrinsics": camera.color_intrinsics,
         "roi_rgb": cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB),
         "biomass_proxy_g": biomass_proxy,
         "plant_number": plant_number,
-        "mpos": mpos,
+        "original_plant_number": (
+            mapping.legacy_plant_number(plant_number) if plant_number is not None else None
+        ),
+        "mpos": mpos,  # RealSense capture position
+        "thermal_mpos": thermal_mpos,  # Optris capture position
+        "optris_offset_mm": optris_offset_mm,
         "timestamp": now.isoformat(timespec="seconds"),
         "saved_dir": None,
         "thermal_c": thermal_c,
@@ -580,7 +598,16 @@ def make_result(
         meta = {
             "timestamp_local": result["timestamp"],
             "plant_number": plant_number,
+            "plant_numbering": "row-major 7 columns x 5 rows",
+            "original_2024_column_major_id": (
+                mapping.legacy_plant_number(plant_number) if plant_number is not None else None
+            ),
             "machine_position_mm": list(mpos) if mpos is not None else None,
+            "realsense_machine_position_mm": list(mpos) if mpos is not None else None,
+            "optris_machine_position_mm": (
+                list(thermal_mpos) if thermal_mpos is not None else None
+            ),
+            "optris_xy_offset_mm": list(optris_offset_mm),
             "original_2024_xy_mm": list(plant_offset_mm(plant_number)) if plant_number else None,
             "realsense_name": camera.device_name,
             "realsense_serial": camera.serial_number,
@@ -591,6 +618,7 @@ def make_result(
             "legacy_biomass_factor_g_per_pixel": LEGACY_BIOMASS_FACTOR_G_PER_PIXEL,
             "biomass_proxy_g_uncalibrated": biomass_proxy,
             "enhanced_segmentation_diagnostics": enhanced_info,
+            "enhanced_segmentation_mode": enhanced_mode,
             "realsense_color_intrinsics": camera.color_intrinsics,
             "optris_present": thermal_c is not None,
             "optris_serial": result["thermal_camera_serial"],
@@ -607,15 +635,19 @@ def make_result(
     return result
 
 
-def perform_capture(plant_number: int | None) -> None:
-    """Capture RealSense + optionally Optris at the current stationary position."""
+def perform_capture(plant_number: int | None,
+                    apply_optris_offset: bool = False) -> None:
+    """RGB/depth at current plant; optionally move XY, then capture Optris.
+
+    The manual 'capture at current position' action never moves the gantry.
+    This routine never homes, never changes Z and never returns XY silently.
+    """
     camera = st.session_state.realsense
     if camera is None or not camera.active:
         raise RuntimeError("RealSense must be connected for RGB/depth and biomass model")
     thermal_camera = st.session_state.optris
-    if st.session_state.require_both_cameras and (
-        thermal_camera is None or not thermal_camera.connected
-    ):
+    thermal_connected = thermal_camera is not None and thermal_camera.connected
+    if st.session_state.require_both_cameras and not thermal_connected:
         raise RuntimeError("Both cameras are required. Connect Optris before acquisition")
     controller = st.session_state.blackbox
     mpos = None
@@ -625,9 +657,38 @@ def perform_capture(plant_number: int | None) -> None:
             raise RuntimeError("Cannot capture while gantry is not Idle")
         mpos = pos
 
+    # Check *before the first camera exposure* whether the second XY target is
+    # valid. Plant-click code also checks before the first motor movement.
+    displacement = (0.0, 0.0)
+    optris_target = None
+    if thermal_connected and apply_optris_offset:
+        displacement = (float(st.session_state.optris_offset_x_mm),
+                        float(st.session_state.optris_offset_y_mm))
+        if displacement != (0.0, 0.0):
+            if (controller is None or not controller.serial.is_open
+                    or not controller.homed_in_this_connection or mpos is None):
+                raise RuntimeError("Home and connect BLACKBOX for offset thermal capture")
+            optris_target = mapping.optris_machine_xy(mpos[:2], displacement)
+
+    # First: stationary RealSense acquisition at the selected plant.
     bgr, depth = camera.capture()
+
+    # Second: optional XY travel followed by stationary Optris acquisition.
+    # The machine intentionally remains at the offset position afterwards.
     thermal_c = None
-    if thermal_camera is not None and thermal_camera.connected:
+    thermal_mpos = None
+    if thermal_connected:
+        if optris_target is not None:
+            controller.move_machine_xy(
+                optris_target[0], optris_target[1],
+                st.session_state.travel_feed_mm_min,
+            )
+            time.sleep(0.8)
+            state, thermal_mpos, _ = controller.status()
+            if state != "Idle":
+                raise RuntimeError("Gantry not idle at Optris offset; thermal capture cancelled")
+        else:
+            thermal_mpos = mpos
         thermal_c = thermal_camera.capture(frames=3)
 
     previous = st.session_state.last_result
@@ -641,6 +702,8 @@ def perform_capture(plant_number: int | None) -> None:
         bgr, depth, camera, thermal_c, thermal_camera, plant_number, mpos,
         st.session_state.save_images, st.session_state.use_legacy_roi,
         st.session_state.thermal_auto_scale, st.session_state.thermal_fixed_range_c,
+        thermal_mpos=thermal_mpos, optris_offset_mm=displacement,
+        enhanced_mode=st.session_state.enhanced_segmentation_mode,
     )
     result["previous_thermal_c"] = previous_thermal
     result["previous_plant_number"] = previous_plant
