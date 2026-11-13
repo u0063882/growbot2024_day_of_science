@@ -1,0 +1,28 @@
+name: GROWBOT v5 offline checks
+
+on:
+  push:
+    branches: [feature/segmentation-pointcloud-v5]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install offline dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==1.26.4 opencv-python-headless==4.9.0.80 pandas==2.2.3
+      - name: Syntax-check all project Python files
+        run: |
+          python -m py_compile growbot_gantry_realsense_optris_v4.py growbot_gantry_realsense_optris_v5.py growbot_segmentation_v5.py growbot_pointcloud_v5.py growbot_mapping_v5.py growbot_optris_backend.py
+      - name: Run hardware-free regression tests
+        run: python -m unittest discover -s tests -v
