@@ -40,6 +40,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -50,6 +51,7 @@ from st_clickable_images import clickable_images
 from utils import create_mask  # Existing 2024 function; no modifications required.
 from growbot_segmentation_v5 import enhanced_plant_mask, segmented_rgb
 from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck
+import growbot_mapping_v5 as mapping
 
 
 # -----------------------------------------------------------------------------
@@ -69,18 +71,12 @@ CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
 EXPECTED_OPTRIS_SERIAL = "18082084"
 PROJECT_DIR = Path(__file__).resolve().parent
 
-# From growbot.py: x=940-(clicked//5)*120; y=-240-(clicked%5)*220.
-# Index 0..34 corresponds to plant number 1..35.
-PLANTS = 35
-GRID_COLUMNS = 7
-GRID_ROWS = 5
-# Display row-major, while the original plant numbering is column-major.
-DISPLAY_IDS = [1 + row + column * GRID_ROWS
-               for row in range(GRID_ROWS) for column in range(GRID_COLUMNS)]
-FIRST_X_MM = 940.0
-FIRST_Y_MM = -240.0
-COLUMN_PITCH_MM = -120.0
-ROW_PITCH_MM = -220.0
+# New row-major public labels: 1..7, 8..14, 15..21, 22..28, 29..35.
+# The original 2024 physical destinations remain unchanged.
+PLANTS = mapping.PLANTS
+GRID_COLUMNS = mapping.GRID_COLUMNS
+GRID_ROWS = mapping.GRID_ROWS
+DISPLAY_IDS = list(range(1, PLANTS + 1))
 
 # From growbot.py (an optional legacy image-analysis region, not full frame).
 LEGACY_RGB_ROI = (40, 370, 170, 480)  # top, bottom, left, right
@@ -88,23 +84,13 @@ LEGACY_BIOMASS_FACTOR_G_PER_PIXEL = 0.00015
 
 
 def plant_offset_mm(plant_number: int) -> tuple[float, float]:
-    """Original GRBL G54 XY targets relative to the homed platform origin."""
-    if not 1 <= plant_number <= PLANTS:
-        raise ValueError("Plant number must be between 1 and 35")
-    column, row = divmod(plant_number - 1, GRID_ROWS)
-    return (FIRST_X_MM + column * COLUMN_PITCH_MM,
-            FIRST_Y_MM + row * ROW_PITCH_MM)
+    """Original physical G54 XY, selected by new row-major plant number."""
+    return mapping.plant_offset_mm(plant_number)
 
 
 def plant_machine_xy(plant_number: int) -> tuple[float, float]:
-    """Map original 2024 work-position XY to GRBL machine-coordinate XY.
-
-    At the confirmed home, the old G54 work origin was (0,0), so the 2024
-    coordinates are the same as displacements from HOME_MPOS. Using G53
-    bypasses any changed G54/G92 work offset on the new PC.
-    """
-    x, y = plant_offset_mm(plant_number)
-    return HOME_MPOS[0] + x, HOME_MPOS[1] + y
+    """Unchanged physical machine position, addressed by row-major plant ID."""
+    return mapping.plant_machine_xy(plant_number)
 
 
 def check_xy_limits(x: float, y: float) -> None:
@@ -661,18 +647,51 @@ def perform_capture(plant_number: int | None) -> None:
     st.session_state.last_result = result
 
 
+@lru_cache(maxsize=1)
 def read_icons() -> list[str]:
+    """Re-label the original plant symbol with row-major numbers 1..35.
+
+    No files are modified. The original icons contain the old numbering, so
+    their red digits are inpainted and the new labels rendered in memory.
+    """
     folder = PROJECT_DIR / "plant icons"
-    icons = {p.stem.lower(): p for p in folder.glob("*.png")}
+    matches = {p.stem.lower(): p for p in folder.glob("*.png")}
+    source = matches.get("plant1")
+    if source is None:
+        raise FileNotFoundError("Missing original plant icon: plant1.png")
+    raw = cv2.imdecode(np.frombuffer(source.read_bytes(), np.uint8),
+                       cv2.IMREAD_UNCHANGED)
+    if raw is None or raw.ndim != 3 or raw.shape[2] not in (3, 4):
+        raise ValueError("Cannot read original plant icon as a colour PNG")
+    bgr = raw[:, :, :3].copy()
+    opacity = (raw[:, :, 3].copy() if raw.shape[2] == 4
+               else np.full(raw.shape[:2], 255, np.uint8))
+    blue, green, red = (bgr[:, :, i].astype(np.float32) for i in range(3))
+    old_red = ((red >= 125) & (red > 1.35 * green)
+               & (red > 1.30 * blue) & (opacity > 40))
+    erase = cv2.dilate(old_red.astype(np.uint8) * 255,
+                       np.ones((7, 7), np.uint8), iterations=1)
+    clean = cv2.inpaint(bgr, erase, 5, cv2.INPAINT_TELEA)
     result = []
     for number in DISPLAY_IDS:
-        icon = icons.get(f"plant{number}")
-        if not icon:
-            raise FileNotFoundError(f"Missing original plant icon: plant{number}.png")
-        encoded = base64.b64encode(icon.read_bytes()).decode("ascii")
-        result.append("data:image/png;base64," + encoded)
+        image = clean.copy()
+        label = str(number)
+        scale = 1.9 if number < 10 else 1.65
+        thickness = 5
+        (text_w, text_h), _ = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_DUPLEX, scale, thickness)
+        origin = ((image.shape[1] - text_w) // 2,
+                  (image.shape[0] + text_h) // 2)
+        cv2.putText(image, label, origin, cv2.FONT_HERSHEY_DUPLEX,
+                    scale, (20, 40, 195), thickness, cv2.LINE_AA)
+        bgra = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+        bgra[:, :, 3] = opacity
+        success, png = cv2.imencode(".png", bgra)
+        if not success:
+            raise RuntimeError("Unable to encode renumbered plant icon")
+        result.append("data:image/png;base64,"
+                      + base64.b64encode(png.tobytes()).decode("ascii"))
     return result
-
 
 def disconnect_all() -> None:
     """Stop RealSense and close serial safely; never send motion or home commands.
