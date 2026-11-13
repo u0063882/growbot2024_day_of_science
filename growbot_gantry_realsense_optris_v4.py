@@ -361,6 +361,20 @@ class OptrisUSB:
                 self._dll_dir = None
 
 
+def thermal_display_limits(temp_c: np.ndarray, auto_scale: bool = False,
+                           fixed_range_c: tuple[float, float] = (10.0, 45.0)
+                           ) -> tuple[float, float]:
+    """Display-only thermal colour limits; never clips or changes raw temperatures."""
+    if auto_scale:
+        finite = np.asarray(temp_c)[np.isfinite(temp_c)]
+        if finite.size:
+            lo, hi = np.percentile(finite, (2, 98))
+            if hi <= lo:
+                hi = lo + 0.5
+            return float(lo), float(hi)
+    return float(fixed_range_c[0]), float(fixed_range_c[1])
+
+
 def thermal_preview(temp_c: np.ndarray, lower_c: float | None = None,
                     upper_c: float | None = None) -> np.ndarray:
     """Make an RGB false-colour preview only (the temperature array remains raw)."""
@@ -474,6 +488,8 @@ def make_result(
     mpos: tuple[float, float, float] | None,
     save_images: bool,
     use_legacy_roi: bool,
+    thermal_auto_scale: bool = False,
+    thermal_fixed_range_c: tuple[float, float] = (10.0, 45.0),
 ) -> dict:
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     top, bottom, left, right = LEGACY_RGB_ROI
@@ -496,7 +512,11 @@ def make_result(
         "timestamp": now.isoformat(timespec="seconds"),
         "saved_dir": None,
         "thermal_c": thermal_c,
-        "thermal_preview": thermal_preview(thermal_c) if thermal_c is not None else None,
+        "thermal_preview": (
+            thermal_preview(thermal_c, *thermal_display_limits(
+                thermal_c, thermal_auto_scale, thermal_fixed_range_c
+            )) if thermal_c is not None else None
+        ),
         "thermal_median_c": float(np.median(thermal_c)) if thermal_c is not None else None,
         "thermal_camera_serial": thermal_camera.serial_number if thermal_camera is not None else None,
     }
@@ -548,6 +568,8 @@ def make_result(
             "thermal_encoding": "original Optris uint16 = (T_C + 100) * 10",
             "thermal_temperature_units": "degree Celsius, SDK radiometric output",
             "thermal_median_c": result["thermal_median_c"],
+            "thermal_display_autoscale": thermal_auto_scale,
+            "thermal_display_fixed_range_c": list(thermal_fixed_range_c),
         }
         (folder / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         result["saved_dir"] = str(folder)
@@ -587,6 +609,7 @@ def perform_capture(plant_number: int | None) -> None:
     result = make_result(
         bgr, depth, camera, thermal_c, thermal_camera, plant_number, mpos,
         st.session_state.save_images, st.session_state.use_legacy_roi,
+        st.session_state.thermal_auto_scale, st.session_state.thermal_fixed_range_c,
     )
     result["previous_thermal_c"] = previous_thermal
     result["previous_plant_number"] = previous_plant
@@ -681,7 +704,9 @@ for name, value in (
     ("last_result", None),
     ("feedback", ""),
     ("enable_grid", False),
-    ("save_images", True),
+    ("save_images", False),
+    ("thermal_auto_scale", False),
+    ("thermal_fixed_range_c", (10.0, 45.0)),
     ("use_legacy_roi", True),
     ("travel_feed_mm_min", DEFAULT_FEED_MM_MIN),
     ("plant_click_epoch", 0),
@@ -844,10 +869,20 @@ with st.sidebar:
 
     st.divider()
     st.header("Capture settings")
-    st.checkbox("Save captures to disk", key="save_images")
+    st.checkbox("Save captures to disk", key="save_images",
+                help="Off by default. Enable to save RGB, depth and thermal files.")
     st.checkbox("Use original 2024 biomass crop", key="use_legacy_roi")
     st.checkbox("Require both RealSense + Optris for capture", key="require_both_cameras")
     st.caption("Biomass remains the 2024 green-pixel demo estimate, not a calibrated measurement.")
+    st.divider()
+    st.header("Thermal display")
+    st.checkbox("Auto-scale Optris colours (2–98% per frame)", key="thermal_auto_scale",
+                help="When off, the fixed range below is used for live, capture and comparison views.")
+    st.slider("Fixed thermal colour range (°C)",
+              min_value=-20.0, max_value=120.0,
+              step=0.5, key="thermal_fixed_range_c",
+              disabled=st.session_state.thermal_auto_scale)
+    st.caption("Only changes the colour palette. Temperature data remain unchanged.")
 
 # -----------------------------------------------------------------------------
 # One-screen imaging workspace: compact plant selector + imaging dashboard.
@@ -1051,13 +1086,17 @@ with results_col:
                     preview_slots[1].info("Depth not available")
                 if thermal_ready:
                     temp = thermal_camera.capture(frames=1, timeout_s=5.0)
-                    lo, hi = np.percentile(temp, (2, 98))
+                    lo, hi = thermal_display_limits(
+                        temp, st.session_state.thermal_auto_scale,
+                        st.session_state.thermal_fixed_range_c,
+                    )
                     preview_slots[2].image(
                         thermal_preview(temp, float(lo), float(hi)),
                         caption=f"LIVE · Optris · {np.median(temp):.1f} °C median",
                         use_column_width=True,
                     )
-                    live_info.caption(f"Thermal preview auto-scale: {lo:.1f}–{hi:.1f} °C · "
+                    scale_name = "auto 2–98%" if st.session_state.thermal_auto_scale else "fixed"
+                    live_info.caption(f"Thermal display ({scale_name}): {lo:.1f}–{hi:.1f} °C · "
                                       "apparent radiometric temperature")
                 else:
                     preview_slots[2].info("Optris not connected")
@@ -1088,9 +1127,12 @@ with results_col:
         with image_cols[2]:
             tc = result.get("thermal_c")
             if tc is not None:
-                # Use current frame's robust 2–98% scaling and show numeric
-                # limits. Do not imply geometric registration to RGB/depth.
-                lo, hi = np.percentile(tc, (2, 98))
+                # False-colour limits are selectable; temperatures stay unmodified.
+                # No geometric registration to the RealSense image is implied.
+                lo, hi = thermal_display_limits(
+                    tc, st.session_state.thermal_auto_scale,
+                    st.session_state.thermal_fixed_range_c,
+                )
                 st.image(
                     thermal_preview(tc, float(lo), float(hi)),
                     caption=f"Thermal · Optris · {lo:.1f}–{hi:.1f} °C",
@@ -1123,8 +1165,11 @@ with results_col:
             current_t = result.get("thermal_c")
             previous_t = result.get("previous_thermal_c")
             if current_t is not None and previous_t is not None:
-                lo = min(float(np.percentile(current_t, 2)), float(np.percentile(previous_t, 2)))
-                hi = max(float(np.percentile(current_t, 98)), float(np.percentile(previous_t, 98)))
+                if st.session_state.thermal_auto_scale:
+                    both = np.concatenate((current_t.ravel(), previous_t.ravel()))
+                    lo, hi = thermal_display_limits(both, True)
+                else:
+                    lo, hi = st.session_state.thermal_fixed_range_c
                 label = (f"Plant {result['previous_plant_number']}" if
                          result.get("previous_plant_number") else "Previous capture")
                 c1, c2 = st.columns(2)
