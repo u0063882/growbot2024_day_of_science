@@ -697,7 +697,8 @@ if st.session_state.clear_arm_next_rerun:
 
 header_left, header_right = st.columns([5, 1])
 with header_left:
-    st.title("GROWBOT · Plant imaging")    st.caption("Nerdland 2024 · 35 plants · BLACKBOX + RealSense D435i + Optris")
+    st.title("GROWBOT · Plant imaging")
+    st.caption("Nerdland 2024 · 35 plants · BLACKBOX + RealSense D435i + Optris")
 with header_right:
     if (PROJECT_DIR / "mebios.png").exists():
         st.image(str(PROJECT_DIR / "mebios.png"), width=135)
