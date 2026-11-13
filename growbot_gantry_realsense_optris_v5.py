@@ -475,6 +475,17 @@ class RealSense:
                 depth = np.asanyarray(depth_frame.get_data()).copy()
                 if bgr.shape[:2] != depth.shape[:2]:
                     raise RuntimeError("Color and depth frame sizes do not match")
+                if self.color_intrinsics is None:
+                    # Camera profile acquisition fallback; 3D is optional and
+                    # must never break the already-tested RGB/depth capture.
+                    try:
+                        intr = color_frame.profile.as_video_stream_profile().get_intrinsics()
+                        self.color_intrinsics = {
+                            "fx": float(intr.fx), "fy": float(intr.fy),
+                            "ppx": float(intr.ppx), "ppy": float(intr.ppy),
+                        }
+                    except Exception:
+                        pass
                 return bgr, depth
             except Exception as exc:
                 if attempt == 2:
