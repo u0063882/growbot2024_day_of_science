@@ -851,6 +851,16 @@ if st.session_state.clear_arm_next_rerun:
     st.session_state.enable_grid = False
     st.session_state.clear_arm_next_rerun = False
 
+
+def disarm_on_offset_change() -> None:
+    # A changed two-stop movement path must be explicitly re-acknowledged.
+    st.session_state.enable_grid = False
+    st.session_state.notice = (
+        "warning",
+        "Optris XY offset changed. Check the new path and re-enable one-click acquisition.",
+    )
+
+
 header_left, header_right = st.columns([5, 1])
 with header_left:
     st.title("GROWBOT · Plant imaging")
@@ -1016,12 +1026,12 @@ with st.sidebar:
     st.number_input(
         "Thermal X offset (mm, machine axes)",
         min_value=-400.0, max_value=400.0, step=5.0,
-        key="optris_offset_x_mm",
+        key="optris_offset_x_mm", on_change=disarm_on_offset_change,
     )
     st.number_input(
         "Thermal Y offset (mm, machine axes)",
         min_value=-400.0, max_value=400.0, step=5.0,
-        key="optris_offset_y_mm",
+        key="optris_offset_y_mm", on_change=disarm_on_offset_change,
     )
     st.caption(
         "Plant click: move to plant → RGB/depth → move by XY offset → thermal image. "
