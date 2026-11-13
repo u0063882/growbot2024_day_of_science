@@ -832,6 +832,9 @@ for name, value in (
     ("feedback", ""),
     ("enable_grid", False),
     ("save_images", False),
+    ("optris_offset_x_mm", 0.0),
+    ("optris_offset_y_mm", 0.0),
+    ("enhanced_segmentation_mode", "Variegated / pale-edged"),
     ("show_3d_view", False),
     ("thermal_auto_scale", False),
     ("thermal_fixed_range_c", (10.0, 45.0)),
@@ -1002,6 +1005,30 @@ with st.sidebar:
     st.checkbox("Use original 2024 biomass crop", key="use_legacy_roi")
     st.checkbox("Require both RealSense + Optris for capture", key="require_both_cameras")
     st.caption("Biomass remains the 2024 green-pixel demo estimate, not a calibrated measurement.")
+    st.selectbox(
+        "Experimental plant mask",
+        ["Variegated / pale-edged", "Green foliage + pale flowers"],
+        key="enhanced_segmentation_mode",
+        help="Variegated mode uses the full RGB frame and targets a central ornamental plant."
+    )
+    st.divider()
+    st.header("Optris XY camera offset")
+    st.number_input(
+        "Thermal X offset (mm, machine axes)",
+        min_value=-400.0, max_value=400.0, step=5.0,
+        key="optris_offset_x_mm",
+    )
+    st.number_input(
+        "Thermal Y offset (mm, machine axes)",
+        min_value=-400.0, max_value=400.0, step=5.0,
+        key="optris_offset_y_mm",
+    )
+    st.caption(
+        "Plant click: move to plant → RGB/depth → move by XY offset → thermal image. "
+        "0,0 means no second move. Offsets are checked against existing axis limits "
+        "before travel; the gantry remains at the Optris position. "
+        "Manual capture at current position never applies an offset."
+    )
     st.divider()
     st.header("Thermal display")
     st.checkbox("Auto-scale Optris colours (2–98% per frame)", key="thermal_auto_scale",
@@ -1044,7 +1071,9 @@ selector_col, results_col = st.columns([1.05, 2.35], gap="large")
 
 with selector_col:
     st.subheader("Select a plant")
-    st.caption("Click = move → settle → capture → show results")
+    st.caption("Click = RGB/depth at plant → optional XY offset → Optris → display")
+    st.caption("Plant labels run 1–7, 8–14, 15–21, 22–28, 29–35; "
+               "the physical 2024 station positions are unchanged.")
     if st.button("Home gantry ($H)",
                  disabled=not connected or state not in ("Idle", "Alarm"),
                  use_container_width=True,
@@ -1116,11 +1145,20 @@ with selector_col:
 
             target_x, target_y = plant_machine_xy(selected_from_click)
             check_xy_limits(target_x, target_y)
+            # Validate BOTH endpoints before commanding the first move.
+            # Prevents starting a plant capture whose thermal offset exceeds
+            # the homed gantry's established safe machine travel limits.
+            if thermal_ready:
+                mapping.optris_machine_xy(
+                    (target_x, target_y),
+                    (float(st.session_state.optris_offset_x_mm),
+                     float(st.session_state.optris_offset_y_mm)),
+                )
             feed = st.session_state.travel_feed_mm_min
             with st.spinner(f"Plant {selected_from_click}: moving → capturing RealSense and thermal"):
                 box.move_machine_xy(target_x, target_y, feed)
                 time.sleep(0.8)  # Wait for motion vibration to settle.
-                perform_capture(selected_from_click)
+                perform_capture(selected_from_click, apply_optris_offset=True)
             st.session_state.notice = (
                 "success", f"Plant {selected_from_click}: arrived, captured and "
                 + ("saved images." if st.session_state.save_images else "processed images (saving disabled)."),
@@ -1272,10 +1310,11 @@ with results_col:
         model_col, summary_col = st.columns([1.2, 1.8], gap="medium")
         with model_col:
             st.image(result["segmentation"],
-                     caption="2024 green-pixel segmentation (ROI)",
+                     caption="Original 2024 green-pixel segmentation (biomass ROI)",
                      use_column_width=True)
             st.image(result["enhanced_segmentation"],
-                     caption="Experimental v5 · foliage + pale floral parts",
+                     caption=f"Experimental v5: {result['enhanced_mode']} "
+                             "(not used for biomass)",
                      use_column_width=True)
             st.caption(result["enhanced_info"].get("status", ""))
         with summary_col:
@@ -1285,11 +1324,14 @@ with results_col:
                              if len(valid_depth) else None)
             st.metric("Biomass proxy · original model", f"{result['biomass_proxy_g']:.2f} g")
             st.caption("Green-pixel estimate only; not calibrated biomass.")
-            old_count = int(np.count_nonzero(result["mask"]))
-            new_count = int(np.count_nonzero(result["enhanced_mask"]))
-            st.metric("Enhanced / original mask area",
-                      f"{new_count / max(old_count, 1):.2f} ×")
             st.caption("Segmentation is experimental. Biomass uses ONLY the unchanged original mask.")
+            if result["mpos"] is not None:
+                st.caption("RealSense machine XY: "
+                           f"{result['mpos'][0]:.1f}, {result['mpos'][1]:.1f} mm")
+            if result["thermal_mpos"] is not None:
+                st.caption("Optris machine XY: "
+                           f"{result['thermal_mpos'][0]:.1f}, "
+                           f"{result['thermal_mpos'][1]:.1f} mm")
             # Avoid nesting st.columns inside summary_col, already within results_col.
             st.metric("Median scene depth", f"{scene_depth_m:.2f} m" if scene_depth_m is not None else "—")
             st.metric("Median thermal", f"{result['thermal_median_c']:.1f} °C"
@@ -1335,10 +1377,13 @@ with results_col:
                     if cloud_choice != "Full scene":
                         small_mask = (result["mask"] if cloud_choice == "Original green mask"
                                       else result["enhanced_mask"])
-                        if result["roi_bounds"] is None:
+                        mask_region = (result["roi_bounds"]
+                                       if cloud_choice == "Original green mask"
+                                       else result["enhanced_roi_bounds"])
+                        if mask_region is None:
                             mask_full = small_mask
                         else:
-                            top, bottom, left, right = result["roi_bounds"]
+                            top, bottom, left, right = mask_region
                             mask_full = np.zeros_like(result["depth"], dtype=np.uint8)
                             mask_full[top:bottom, left:right] = small_mask
                     points = pointcloud_data(
