@@ -1,0 +1,38 @@
+# Environments and caches
+.venv/
+venv/
+.conda/
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+.ipynb_checkpoints/
+
+# Local measured data, experiment exports
+captures/
+thermal_experiments/
+optris_usb_test_output/
+output/
+outputs/
+*.log
+
+# Original Optris SDK / camera-specific calibration / configuration
+irDirectSDK/
+Califiles SN*/
+generic.xml
+Formats.def
+*.dll
+*.pyd
+
+# Windows installers and archive bundles
+installer/
+installers/
+installer folder/
+*.exe
+*.msi
+*.zip
+*.7z
+
+# OS artifacts
+Thumbs.db
+.DS_Store
