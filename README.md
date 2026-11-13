@@ -51,3 +51,10 @@ Camera-specific files, DLLs and installers are excluded from version control thr
 The machine configuration is for the **original Nerdland gantry** (GRBL 1.1g custom, COM4, work envelope and homing coordinates coded into v4). Before moving, ensure the gantry is clear, verify physical emergency-stop access and homing operation. Never reuse these coordinates on another machine without validation. Keep the v4 baseline stable when testing experimental algorithms.
 
 No real/plastic classification is included in v4. RGB and depth are aligned to each other, but thermal images are not spatially registered to the RealSense.
+
+
+## Thermal display and saving defaults
+
+For GROWBOT v4 and experimental v5, **Save captures to disk** starts **unchecked** in a fresh Streamlit session. Enable it in *Capture settings* to write RGB, depth and thermal data.
+
+The Optris false-colour preview defaults to a **fixed 10–45 °C range** for a broader, consistent palette. Under *Thermal display*, select **Auto-scale (2nd–98th percentile)** to adapt per frame, or adjust the fixed range. These settings change only the displayed colours; the original thermal temperatures remain unchanged.
