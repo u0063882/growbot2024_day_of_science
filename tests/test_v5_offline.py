@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 
 from growbot_segmentation_v5 import enhanced_plant_mask
-from growbot_pointcloud_v5 import pointcloud_data, estimate_scene_height_m
+from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck, estimate_scene_height_m
 from growbot_segmentation_v5 import variegated_plant_mask
 from growbot_mapping_v5 import (
     GRID_COLUMNS, GRID_ROWS, legacy_plant_number, plant_offset_mm,
@@ -49,6 +49,18 @@ class PointCloudTests(unittest.TestCase):
         self.assertLessEqual(len(cloud), 1200)
         self.assertTrue((cloud['g'] == 120).all())
         self.assertLess(abs(float(cloud['z'].mean())), 0.01)
+
+    def test_orbit_view_uses_zoom_suitable_for_metric_plants(self):
+        import json
+        rgb = np.zeros((60, 80, 3), dtype=np.uint8)
+        depth = np.full((60, 80), 700, dtype=np.uint16)
+        intr = {'fx': 100, 'fy': 100, 'ppx': 40, 'ppy': 30}
+        cloud = pointcloud_data(rgb, depth, intr, 0.001, point_limit=1200)
+        deck = pointcloud_deck(cloud, point_size=5)
+        data = json.loads(deck.to_json())
+        zoom = data['initialViewState']['zoom']
+        self.assertGreater(zoom, 7.0)
+        self.assertEqual(data['layers'][0]['pointSize'], 5)
 
     def test_invalid_intrinsics_fails_safely(self):
         rgb = np.zeros((20, 20, 3), dtype=np.uint8)
@@ -163,8 +175,8 @@ class DashboardDefaultsSourceTests(unittest.TestCase):
                 / "growbot_gantry_realsense_optris_v5.py").read_text(encoding="utf-8")
         self.assertIn('DEFAULT_FEED_MM_MIN = 2500', code)
         self.assertIn('MAX_FEED_MM_MIN = 3600', code)
-        self.assertIn('("optris_offset_x_mm", 5.0)', code)
-        self.assertIn('("optris_offset_y_mm", 0.0)', code)
+        self.assertIn('("optris_offset_x_mm", 0.0)', code)
+        self.assertIn('("optris_offset_y_mm", 5.0)', code)
         self.assertIn('("thermal_fixed_range_c", (18.0, 23.0))', code)
         self.assertIn('st.image(result["enhanced_segmentation"]', code)
         self.assertNotIn('st.image(result["segmentation"]', code)
