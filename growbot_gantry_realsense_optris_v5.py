@@ -50,7 +50,7 @@ from st_clickable_images import clickable_images
 
 from utils import create_mask  # Existing 2024 function; no modifications required.
 from growbot_segmentation_v5 import enhanced_plant_mask, segmented_rgb
-from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck
+from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck, estimate_scene_height_m
 import growbot_mapping_v5 as mapping
 
 
@@ -63,9 +63,9 @@ HOME_MPOS = (-1499.0, -1.0, -1.0)  # Confirmed after a successful $H.
 HOME_TOLERANCE_MM = 2.0
 AXIS_LIMITS = {"X": (-1499.0, -1.0), "Y": (-1499.0, -1.0)}
 POSITION_TOLERANCE_MM = 0.5
-DEFAULT_FEED_MM_MIN = 1800  # User-adjustable up to 2400; GRBL $110/111 = 2500.
+DEFAULT_FEED_MM_MIN = 2500  # Requested G-code feed; GRBL currently caps axes at 2500 mm/min.
 MIN_FEED_MM_MIN = 200
-MAX_FEED_MM_MIN = 2400
+MAX_FEED_MM_MIN = 3600  # GRBL $110/$111 remain 2500 mm/min; firmware unchanged.
 MAX_MANUAL_JOG_MM = 5.0
 CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
 EXPECTED_OPTRIS_SERIAL = "18082084"
@@ -530,6 +530,10 @@ def make_result(
         enhanced_info = {"status": f"Enhanced segmentation failed: {exc}",
                          "enhanced_pixels": 0}
     biomass_proxy = round(float(np.count_nonzero(mask)) * LEGACY_BIOMASS_FACTOR_G_PER_PIXEL, 2)
+    # Approximate height above the tabletop from outer-border versus
+    # foreground depth. This is not a calibrated or segmented plant height.
+    height_mask = enhanced_mask if enhanced_mask.shape == depth.shape else None
+    scene_height_m = estimate_scene_height_m(depth, camera.depth_scale, height_mask)
     now = datetime.now()
     result = {
         "rgb": rgb,
@@ -547,6 +551,7 @@ def make_result(
         "color_intrinsics": camera.color_intrinsics,
         "roi_rgb": cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2RGB),
         "biomass_proxy_g": biomass_proxy,
+        "scene_height_m": scene_height_m,
         "plant_number": plant_number,
         "original_plant_number": (
             mapping.legacy_plant_number(plant_number) if plant_number is not None else None
@@ -617,6 +622,7 @@ def make_result(
             "legacy_roi": use_legacy_roi,
             "legacy_biomass_factor_g_per_pixel": LEGACY_BIOMASS_FACTOR_G_PER_PIXEL,
             "biomass_proxy_g_uncalibrated": biomass_proxy,
+            "relative_scene_height_m_uncalibrated": scene_height_m,
             "enhanced_segmentation_diagnostics": enhanced_info,
             "enhanced_segmentation_mode": enhanced_mode,
             "realsense_color_intrinsics": camera.color_intrinsics,
@@ -832,12 +838,12 @@ for name, value in (
     ("feedback", ""),
     ("enable_grid", False),
     ("save_images", False),
-    ("optris_offset_x_mm", 0.0),
+    ("optris_offset_x_mm", 5.0),
     ("optris_offset_y_mm", 0.0),
     ("enhanced_segmentation_mode", "Variegated / pale-edged"),
     ("show_3d_view", False),
     ("thermal_auto_scale", False),
-    ("thermal_fixed_range_c", (10.0, 45.0)),
+    ("thermal_fixed_range_c", (18.0, 23.0)),
     ("use_legacy_roi", True),
     ("travel_feed_mm_min", DEFAULT_FEED_MM_MIN),
     ("plant_click_epoch", 0),
@@ -1004,9 +1010,14 @@ with st.sidebar:
         step=100,
         key="travel_feed_mm_min",
         help="Used for plant moves, return-to-home, and manual jogging. "
-             "Your controller is set to 2500 mm/min maximum per XY axis.",
+             "GRBL $110/$111 currently limit each XY axis to 2500 mm/min, "
+             "even if a higher commanded feed is selected.",
     )
-    st.caption("Speed setting is applied to manual jogs and all XY travel.")
+    st.caption(
+        "Requested feed applies to jogs and XY travel. The controller's GRBL "
+        "maximum of 2500 mm/min per XY axis is unchanged; selecting 3600 "
+        "does not override that hardware limit."
+    )
 
     st.divider()
     st.header("Capture settings")
@@ -1015,12 +1026,6 @@ with st.sidebar:
     st.checkbox("Use original 2024 biomass crop", key="use_legacy_roi")
     st.checkbox("Require both RealSense + Optris for capture", key="require_both_cameras")
     st.caption("Biomass remains the 2024 green-pixel demo estimate, not a calibrated measurement.")
-    st.selectbox(
-        "Experimental plant mask",
-        ["Variegated / pale-edged", "Green foliage + pale flowers"],
-        key="enhanced_segmentation_mode",
-        help="Variegated mode uses the full RGB frame and targets a central ornamental plant."
-    )
     st.divider()
     st.header("Optris XY camera offset")
     st.number_input(
@@ -1319,22 +1324,26 @@ with results_col:
 
         model_col, summary_col = st.columns([1.2, 1.8], gap="medium")
         with model_col:
-            st.image(result["segmentation"],
-                     caption="Original 2024 green-pixel segmentation (biomass ROI)",
-                     use_column_width=True)
             st.image(result["enhanced_segmentation"],
-                     caption=f"Experimental v5: {result['enhanced_mode']} "
+                     caption="Experimental v5: Variegated / pale-edged "
                              "(not used for biomass)",
                      use_column_width=True)
             st.caption(result["enhanced_info"].get("status", ""))
         with summary_col:
-            # Scene depth is a simple valid-pixel median, not segmented plant height.
-            valid_depth = result["depth"][result["depth"] > 0]
-            scene_depth_m = (float(np.median(valid_depth)) * result["depth_scale_m_per_unit"]
-                             if len(valid_depth) else None)
-            st.metric("Biomass proxy · original model", f"{result['biomass_proxy_g']:.2f} g")
-            st.caption("Green-pixel estimate only; not calibrated biomass.")
-            st.caption("Segmentation is experimental. Biomass uses ONLY the unchanged original mask.")
+            st.metric("Biomass estimate · original model",
+                      f"{result['biomass_proxy_g']:.2f} g")
+            h = result.get("scene_height_m")
+            st.metric("Scene height (estimate)",
+                      f"{100*h:.1f} cm" if h is not None else "—")
+            t = result.get("thermal_median_c")
+            st.metric("Scene temperature · median",
+                      f"{t:.1f} °C" if t is not None else "—")
+            st.caption("Biomass is the original green-pixel proxy; height is "
+                       "estimated relative to the background surface, not calibrated.")
+            if result.get("saved_dir"):
+                st.caption("Saved: " + str(result["saved_dir"]))
+
+        with st.expander("More details · capture positions and comparison", expanded=False):
             if result["mpos"] is not None:
                 st.caption("RealSense machine XY: "
                            f"{result['mpos'][0]:.1f}, {result['mpos'][1]:.1f} mm")
@@ -1342,15 +1351,6 @@ with results_col:
                 st.caption("Optris machine XY: "
                            f"{result['thermal_mpos'][0]:.1f}, "
                            f"{result['thermal_mpos'][1]:.1f} mm")
-            # Avoid nesting st.columns inside summary_col, already within results_col.
-            st.metric("Median scene depth", f"{scene_depth_m:.2f} m" if scene_depth_m is not None else "—")
-            st.metric("Median thermal", f"{result['thermal_median_c']:.1f} °C"
-                      if result.get("thermal_median_c") is not None else "—")
-            if result.get("saved_dir"):
-                st.caption("Saved: " + str(result["saved_dir"]))
-
-        with st.expander("More results · original ROI, previous thermal and files", expanded=False):
-            st.image(result["roi_rgb"], caption="2024 biomass ROI", width=440)
             current_t = result.get("thermal_c")
             previous_t = result.get("previous_thermal_c")
             if current_t is not None and previous_t is not None:
