@@ -1,0 +1,2 @@
+C:\Users\ScienceDay\Desktop\GrowbotDEMO\growbot2024_day_of_science\thermal_experiments\optris_config_absolute_paths.xml
+1
