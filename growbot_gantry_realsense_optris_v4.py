@@ -1000,27 +1000,25 @@ with selector_col:
             st.error(f"Return-to-home failed: {exc}")
 
 with results_col:
-    head, actions = st.columns([2.4, 2.8])
-    with head:
-        st.subheader("Imaging dashboard")
-    with actions:
-        live_actions = st.columns([1.2, 1, 1])
-        with live_actions[0]:
-            start_live = st.button(
-                "▶ Live cameras", disabled=not (camera_ready or thermal_ready),
-                use_container_width=True,
-                help="Read-only, time-limited live RGB, depth and thermal previews; no saving or motion."
-            )
-        with live_actions[1]:
-            st.button("■ Stop live", use_container_width=True,
-                      help="Interrupt live preview and return to the last captured result.")
-        with live_actions[2]:
-            preview_duration_s = st.selectbox(
-                "Preview limit", [15, 30, 60, 120], index=2,
-                format_func=lambda s: f"{s} s",
-                label_visibility="collapsed",
-                help="Maximum live preview duration per start. Can be stopped earlier."
-            )
+    st.subheader("Imaging dashboard")
+    # One column nesting level only (compatible with Streamlit 1.33).
+    live_actions = st.columns([1.2, 1, 1])
+    with live_actions[0]:
+        start_live = st.button(
+            "▶ Live cameras", disabled=not (camera_ready or thermal_ready),
+            use_container_width=True,
+            help="Read-only, time-limited live RGB, depth and thermal previews; no saving or motion."
+        )
+    with live_actions[1]:
+        st.button("■ Stop live", use_container_width=True,
+                  help="Interrupt live preview and return to the last captured result.")
+    with live_actions[2]:
+        preview_duration_s = st.selectbox(
+            "Preview limit", [15, 30, 60, 120], index=2,
+            format_func=lambda s: f"{s} s",
+            label_visibility="collapsed",
+            help="Maximum live preview duration per start. Can be stopped earlier."
+        )
 
     result = st.session_state.last_result
     if start_live:
@@ -1113,12 +1111,10 @@ with results_col:
                              if len(valid_depth) else None)
             st.metric("Biomass proxy · original model", f"{result['biomass_proxy_g']:.2f} g")
             st.caption("Green-pixel estimate only; not calibrated biomass.")
-            metric_cols = st.columns(2)
-            with metric_cols[0]:
-                st.metric("Median scene depth", f"{scene_depth_m:.2f} m" if scene_depth_m is not None else "—")
-            with metric_cols[1]:
-                st.metric("Median thermal", f"{result['thermal_median_c']:.1f} °C"
-                          if result.get("thermal_median_c") is not None else "—")
+            # Avoid nesting st.columns inside summary_col, already within results_col.
+            st.metric("Median scene depth", f"{scene_depth_m:.2f} m" if scene_depth_m is not None else "—")
+            st.metric("Median thermal", f"{result['thermal_median_c']:.1f} °C"
+                      if result.get("thermal_median_c") is not None else "—")
             if result.get("saved_dir"):
                 st.caption("Saved: " + str(result["saved_dir"]))
 
