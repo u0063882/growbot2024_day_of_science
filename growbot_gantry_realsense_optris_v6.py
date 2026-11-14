@@ -50,11 +50,10 @@ from st_clickable_images import clickable_images
 
 from utils import create_mask  # Existing 2024 function; no modifications required.
 from growbot_segmentation_v5 import enhanced_plant_mask, segmented_rgb
-from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck, estimate_scene_height_m
+from growbot_pointcloud_v5 import estimate_scene_height_m
 from growbot_optris_auto_z import plan_z_standoff
 from growbot_display_v6 import (
-    DISPLAY_ROTATIONS, DEPTH_MODES, rotate_image, rotate_pointcloud_xy,
-    depth_limits_m, depth_rgb_display,
+    DEPTH_MODES, rotate_image, depth_limits_m, depth_rgb_display,
 )
 import growbot_mapping_v5 as mapping
 
@@ -980,10 +979,9 @@ for name, value in (
     ("z_clearance_confirmed", False),
     ("optris_offset_y_mm", 5.0),
     ("enhanced_segmentation_mode", "Variegated / pale-edged"),
-    ("show_3d_view", False),
     ("display_rotation_deg", 90),
     ("depth_colour_mode", "Fixed range"),
-    ("depth_colour_range_m", (0.35, 1.25)),
+    ("depth_colour_range_m", (0.35, 0.50)),
     ("thermal_auto_scale", False),
     ("thermal_fixed_range_c", (18.0, 23.0)),
     ("use_legacy_roi", True),
@@ -1245,7 +1243,7 @@ with st.sidebar:
     st.divider()
     st.header("Image display")
     st.selectbox(
-        "Rotate RGB, depth, thermal and 3D view",
+        "Rotate RGB, depth and thermal",
         options=[90, 0, -90, 180],
         format_func=lambda deg: f"{deg:+d}°" if deg != 0 else "0°",
         key="display_rotation_deg",
@@ -1261,7 +1259,7 @@ with st.sidebar:
     )
     st.slider(
         "Depth colour near/far (m)",
-        min_value=0.10, max_value=3.00, step=0.05,
+        min_value=0.10, max_value=3.00, step=0.01,
         key="depth_colour_range_m",
         disabled=(st.session_state.depth_colour_mode != "Fixed range"),
     )
@@ -1635,49 +1633,6 @@ with results_col:
             st.caption("Thermal pixels are not registered to RealSense pixels. "
                        "Capture times differ; the displayed temperature depends on emissivity and reflections.")
 
-        with st.expander("Interactive 3D · RealSense RGB point cloud", expanded=False):
-            st.caption("Rotate and zoom the RGB-coloured depth points. "
-                       "Coordinates are camera-relative; not a calibrated volume/biomass measurement.")
-            st.checkbox("Render point cloud", key="show_3d_view")
-            cloud_choice = st.selectbox(
-                "Show points", ["Full scene", "Original green mask", "Enhanced v5 mask"],
-                key="pointcloud_selection",
-            )
-            cloud_limit = st.slider("Maximum displayed 3D points",
-                                    min_value=3000, max_value=30000, value=18000, step=1000)
-            cloud_point_size = st.slider("3D point size (pixels)",
-                                         min_value=2, max_value=10, value=5)
-            cloud_max_depth = st.slider("Maximum depth shown (m)",
-                                        min_value=0.5, max_value=3.0,
-                                        value=2.0, step=0.1)
-            if st.session_state.show_3d_view:
-                try:
-                    mask_full = None
-                    if cloud_choice != "Full scene":
-                        small_mask = (result["mask"] if cloud_choice == "Original green mask"
-                                      else result["enhanced_mask"])
-                        mask_region = (result["roi_bounds"]
-                                       if cloud_choice == "Original green mask"
-                                       else result["enhanced_roi_bounds"])
-                        if mask_region is None:
-                            mask_full = small_mask
-                        else:
-                            top, bottom, left, right = mask_region
-                            mask_full = np.zeros_like(result["depth"], dtype=np.uint8)
-                            mask_full[top:bottom, left:right] = small_mask
-                    points = pointcloud_data(
-                        result["rgb"], result["depth"], result["color_intrinsics"],
-                        result["depth_scale_m_per_unit"], point_limit=cloud_limit,
-                        depth_range_m=(0.15, cloud_max_depth), mask=mask_full,
-                    )
-                    points = rotate_pointcloud_xy(points, display_rotation)
-                    st.pydeck_chart(pointcloud_deck(points, point_size=cloud_point_size),
-                                    use_container_width=True)
-                    st.caption(f"{len(points):,} RGB-coloured depth points · "
-                               "camera-relative metres · drag to rotate, scroll to zoom. "
-                               "Initial view is auto-fitted; missing depth stays missing.")
-                except Exception as exc:
-                    st.warning(f"3D point cloud unavailable: {exc}")
 
 st.divider()
 with st.expander("Machine control, homing and manual jog", expanded=False):
