@@ -6,16 +6,16 @@ does not change `main`, the earlier v5 branch, or the original v6 branch.
 ## Review summary
 
 - **Existing camera SDK and GRBL motion code are preserved.** New image
-  orientation, colour contrast and optional 3D orientation are display only.
+  orientation and depth colour contrast are display only.
   Camera acquisition, plant addressing, depth units, thermal temperature
   calculations, file saving, motion coordinates and biomass proxy are unchanged.
 - **Display orientation** defaults to **+90° (counterclockwise)**. Under
   *Image display*, choose -90°, 0°, +90° or 180°. This applies to RGB, false-colour
   depth, thermal, displayed segmentation, thermal comparisons, and the optional
-  interactive 3D point-cloud orientation. Raw saved images are not rotated.
-- **Depth colour range** defaults to **Fixed range: 0.35–1.25 m**. This
+  the 2D thermal comparisons and segmentation. Raw saved images are not rotated.
+- **Depth colour range** defaults to **Fixed range: 0.35–0.50 m**. This
   compresses the camera-to-object range relative to the old 0–2 m palette,
-  increasing contrast among near plants. If your scene falls outside it,
+  increasing contrast among plants measured between 35 and 50 cm. If your scene falls outside it,
   switch to **Auto (5–95% valid depth)** or **Original 0–2 m**. The palette
   convention remains near=red, far=blue, missing=black. The numeric 16-bit
   RealSense depth and Z planner still use *unmodified* depth.
@@ -50,7 +50,7 @@ does not change `main`, the earlier v5 branch, or the original v6 branch.
    then double-click **Start_GROWBOT_v6.bat**.
 4. Check the sidebar: *Optris Z standoff* = **Off**, *Save captures to disk* =
    **off** unless desired, *Display rotation* = **+90°**,
-   *Depth contrast* = **Fixed 0.35–1.25 m**.
+   *Depth contrast* = **Fixed 0.35–0.50 m**.
 5. Connect BLACKBOX, perform the same verified homing as v4, connect RealSense
    and Optris.
 6. **Capture at current position (no movement)**. Inspect the three images
@@ -77,7 +77,7 @@ does not change `main`, the earlier v5 branch, or the original v6 branch.
 
 The GitHub workflow checks Python 3.10 syntax and includes hardware-free
 unit tests for motor bounds, XY interlock at lowered Z, automatic retraction
-after successful or failing thermal acquisition, and 2D/3D rotation and
+after successful or failing thermal acquisition, and 2D rotation and
 depth colour palette. This does not simulate USB timing or validate the real
 GRBL controller.
 
@@ -103,3 +103,18 @@ sensor would improve this markedly, but requires hardware configuration.
 
 Given the very limited commissioning window, **do not introduce an unvalidated
 plastic classifier on the demo branch**.
+
+## Simplification for demonstration
+
+The interactive RGB point-cloud panel was removed from v6 because its 3D
+presentation was unreliable on the intended demo setup. The RGB camera,
+RealSense depth map, thermal image, enhanced segmentation, numerical scene
+height estimate, optional depth-based Z proposal and all verified safety
+checks are retained. The underlying point-cloud helper remains available in
+v5 for future development but is not launched from the v6 dashboard.
+
+The measured object distance is approximately **35–50 cm**, so the default
+near/far depth palette has been set to **0.35–0.50 m**, with **0.01 m** slider
+steps. This is a *display setting only*: depth values are not clipped in the
+acquisition, segmentation or Z safety planner. If the object falls outside
+that interval, adjust the slider or select automatic limits.
