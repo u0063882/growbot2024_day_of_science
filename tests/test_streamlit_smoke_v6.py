@@ -18,13 +18,13 @@ class V6StartupTests(unittest.TestCase):
         self.assertEqual(problems, [], "\n".join(problems))
         self.assertEqual(app.session_state["display_rotation_deg"], 90)
         self.assertEqual(app.session_state["depth_colour_mode"], "Fixed range")
-        self.assertEqual(tuple(app.session_state["depth_colour_range_m"]), (0.35, 1.25))
+        self.assertEqual(tuple(app.session_state["depth_colour_range_m"]), (0.35, 0.50))
         self.assertEqual(app.session_state["optris_z_mode"], "Off")
         self.assertFalse(app.session_state["save_images"])
 
 
     def test_dashboard_renders_synthetic_capture_without_hardware(self):
-        """Exercise the after-capture layout (not covered by empty startup)."""
+        """Exercise the 2D after-capture layout (not covered by empty startup)."""
         import numpy as np
 
         app = AppTest.from_file(str(APP_PATH), default_timeout=20).run()
@@ -64,7 +64,6 @@ class V6StartupTests(unittest.TestCase):
             "saved_dir": None,
         }
         app.session_state["last_result"] = result
-        app.session_state["show_3d_view"] = True
         app.run()
         problems = [str(err.message) for err in app.exception]
         self.assertEqual(problems, [], "\\n".join(problems))
