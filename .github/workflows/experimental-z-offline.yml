@@ -2,7 +2,7 @@ name: GROWBOT experimental Z offline checks
 
 on:
   push:
-    branches: [feature/optris-auto-z-standoff]
+    branches: [feature/optris-auto-z-standoff, feature/v6-demo-hardening]
   pull_request:
 
 jobs:
@@ -19,6 +19,6 @@ jobs:
           python -m pip install numpy==1.26.4 pandas==2.1.4 opencv-python-headless==4.9.0.80
       - name: Compile application and helper source
         run: |
-          python -m compileall -q growbot_gantry_realsense_optris_v6.py growbot_optris_auto_z.py growbot_pointcloud_v5.py growbot_segmentation_v5.py growbot_mapping_v5.py
+          python -m compileall -q growbot_gantry_realsense_optris_v6.py growbot_optris_auto_z.py growbot_pointcloud_v5.py growbot_segmentation_v5.py growbot_mapping_v5.py growbot_display_v6.py
       - name: Run tests without opening any cameras or serial ports
         run: python -m unittest discover -s tests -v
