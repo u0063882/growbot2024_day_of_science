@@ -16,7 +16,7 @@ jobs:
       - name: Install minimal dependencies for hardware-free tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy==1.26.4 pandas==2.1.4 opencv-python-headless==4.9.0.80 pydeck==0.8.1b0
+          python -m pip install numpy==1.26.4 pandas==2.1.4 opencv-python-headless==4.9.0.80 pydeck==0.8.1b0 streamlit==1.33.0 st-clickable-images==0.0.3 pyserial==3.5
       - name: Compile application and helper source
         run: |
           python -m compileall -q growbot_gantry_realsense_optris_v6.py growbot_optris_auto_z.py growbot_pointcloud_v5.py growbot_segmentation_v5.py growbot_mapping_v5.py growbot_display_v6.py
