@@ -48,9 +48,9 @@ class DisplayRotationTests(unittest.TestCase):
 class DepthPaletteTests(unittest.TestCase):
     def test_fixed_depth_range_is_not_full_2_metres(self):
         depth = np.full((40, 50), 700, dtype=np.uint16)
-        self.assertEqual(depth_limits_m(depth, 0.001, "Fixed range", (0.35, 1.25)),
-                         (0.35, 1.25))
-        a = depth_rgb_display(depth, 0.001, 0.35, 1.25)
+        self.assertEqual(depth_limits_m(depth, 0.001, "Fixed range", (0.35, 0.50)),
+                         (0.35, 0.50))
+        a = depth_rgb_display(depth, 0.001, 0.35, 0.50)
         b = depth_rgb_display(depth, 0.001, 0.0, 2.0)
         self.assertEqual(a.shape, (40, 50, 3))
         self.assertFalse(np.array_equal(a, b))
@@ -67,7 +67,7 @@ class DepthPaletteTests(unittest.TestCase):
     def test_invalid_pixels_black_and_raw_unchanged(self):
         depth = np.array([[0, 400, 850], [1400, 0, 300]], dtype=np.uint16)
         original = depth.copy()
-        rgb = depth_rgb_display(depth, 0.001, 0.35, 1.25)
+        rgb = depth_rgb_display(depth, 0.001, 0.35, 0.50)
         self.assertTrue((rgb[0, 0] == 0).all())
         self.assertTrue((rgb[1, 1] == 0).all())
         np.testing.assert_array_equal(depth, original)
