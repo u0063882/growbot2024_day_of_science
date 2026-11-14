@@ -50,8 +50,11 @@ from st_clickable_images import clickable_images
 
 from utils import create_mask  # Existing 2024 function; no modifications required.
 from growbot_segmentation_v5 import enhanced_plant_mask, segmented_rgb
-from growbot_pointcloud_v5 import pointcloud_data, pointcloud_deck, estimate_scene_height_m
+from growbot_pointcloud_v5 import estimate_scene_height_m
 from growbot_optris_auto_z import plan_z_standoff
+from growbot_display_v6 import (
+    DEPTH_MODES, rotate_image, depth_limits_m, depth_rgb_display,
+)
 import growbot_mapping_v5 as mapping
 
 
@@ -780,6 +783,10 @@ def perform_capture(plant_number: int | None,
                 raise RuntimeError("Automatic Z requires the gantry at top Z.")
             lower_mm = float(plan.lowering_mm)
 
+        if plan_report is not None:
+            # Distinguish the depth-based *proposal* from actual Z movement.
+            plan_report["applied_lowering_mm"] = lower_mm if lower_mm > 0 else 0.0
+
         # If a depth estimate is uncertain, remain at TOP and still acquire
         # thermal; a failed estimate can never cause an unsupported motion.
         descended = False
@@ -972,7 +979,9 @@ for name, value in (
     ("z_clearance_confirmed", False),
     ("optris_offset_y_mm", 5.0),
     ("enhanced_segmentation_mode", "Variegated / pale-edged"),
-    ("show_3d_view", False),
+    ("display_rotation_deg", 90),
+    ("depth_colour_mode", "Fixed range"),
+    ("depth_colour_range_m", (0.35, 0.50)),
     ("thermal_auto_scale", False),
     ("thermal_fixed_range_c", (18.0, 23.0)),
     ("use_legacy_roi", True),
@@ -1231,6 +1240,31 @@ with st.sidebar:
               step=0.5, key="thermal_fixed_range_c",
               disabled=st.session_state.thermal_auto_scale)
     st.caption("Only changes the colour palette. Temperature data remain unchanged.")
+    st.divider()
+    st.header("Image display")
+    st.selectbox(
+        "Rotate RGB, depth and thermal",
+        options=[90, 0, -90, 180],
+        format_func=lambda deg: f"{deg:+d}°" if deg != 0 else "0°",
+        key="display_rotation_deg",
+        help="Display-only rotation, counterclockwise positive. "
+             "Does not rotate raw images, depth alignment, plant masks or motor coordinates.",
+    )
+    st.selectbox(
+        "Depth colour contrast",
+        options=DEPTH_MODES,
+        key="depth_colour_mode",
+        help="Fixed range gives consistent colours across plants; auto uses "
+             "the 5th–95th percentiles of valid distances in each frame.",
+    )
+    st.slider(
+        "Depth colour near/far (m)",
+        min_value=0.10, max_value=3.00, step=0.01,
+        key="depth_colour_range_m",
+        disabled=(st.session_state.depth_colour_mode != "Fixed range"),
+    )
+    st.caption("Near depth = red, far depth = blue; zero/missing depth = black. "
+               "Raw depth values remain unchanged.")
 
 # -----------------------------------------------------------------------------
 # One-screen imaging workspace: compact plant selector + imaging dashboard.
@@ -1419,6 +1453,17 @@ with results_col:
             help="Maximum live preview duration per start. Can be stopped earlier."
         )
 
+    display_rotation = st.session_state.display_rotation_deg
+
+    def render_depth(depth_image, scale_m):
+        lo, hi = depth_limits_m(
+            depth_image, scale_m,
+            st.session_state.depth_colour_mode,
+            st.session_state.depth_colour_range_m,
+        )
+        return rotate_image(depth_rgb_display(depth_image, scale_m, lo, hi),
+                            display_rotation), lo, hi
+
     result = st.session_state.last_result
     if start_live:
         # Streamlit 1.33 has no st.fragment or native timer. Instead we render
@@ -1438,12 +1483,15 @@ with results_col:
                 if camera_ready:
                     bgr, depth = camera.capture()
                     preview_slots[0].image(
-                        cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                        rotate_image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                                     display_rotation),
                         caption="LIVE · RealSense RGB", use_column_width=True,
                     )
+                    depth_rgb, near_m, far_m = render_depth(depth, camera.depth_scale)
                     preview_slots[1].image(
-                        depth_preview(depth, camera.depth_scale),
-                        caption="LIVE · aligned depth (0–2 m)", use_column_width=True,
+                        depth_rgb,
+                        caption=f"LIVE · aligned depth {near_m:.2f}–{far_m:.2f} m",
+                        use_column_width=True,
                     )
                 else:
                     preview_slots[0].info("RealSense not connected")
@@ -1455,7 +1503,8 @@ with results_col:
                         st.session_state.thermal_fixed_range_c,
                     )
                     preview_slots[2].image(
-                        thermal_preview(temp, float(lo), float(hi)),
+                        rotate_image(thermal_preview(temp, float(lo), float(hi)),
+                                     display_rotation),
                         caption=f"LIVE · Optris · {np.median(temp):.1f} °C median",
                         use_column_width=True,
                     )
@@ -1485,9 +1534,15 @@ with results_col:
         st.caption(f"**{caption}** · {result['timestamp']} · RealSense and Optris captured sequentially")
         image_cols = st.columns(3, gap="small")
         with image_cols[0]:
-            st.image(result["rgb"], caption="RGB · RealSense", use_column_width=True)
+            st.image(rotate_image(result["rgb"], display_rotation),
+                     caption="RGB · RealSense", use_column_width=True)
         with image_cols[1]:
-            st.image(result["depth_preview"], caption="Depth · aligned to RGB · 0–2 m", use_column_width=True)
+            depth_rgb, depth_near, depth_far = render_depth(
+                result["depth"], result["depth_scale_m_per_unit"],
+            )
+            st.image(depth_rgb,
+                     caption=f"Depth · RealSense · {depth_near:.2f}–{depth_far:.2f} m",
+                     use_column_width=True)
         with image_cols[2]:
             tc = result.get("thermal_c")
             if tc is not None:
@@ -1498,7 +1553,8 @@ with results_col:
                     st.session_state.thermal_fixed_range_c,
                 )
                 st.image(
-                    thermal_preview(tc, float(lo), float(hi)),
+                    rotate_image(thermal_preview(tc, float(lo), float(hi)),
+                                 display_rotation),
                     caption=f"Thermal · Optris · {lo:.1f}–{hi:.1f} °C",
                     use_column_width=True,
                 )
@@ -1507,7 +1563,8 @@ with results_col:
 
         model_col, summary_col = st.columns([1.2, 1.8], gap="medium")
         with model_col:
-            st.image(result["enhanced_segmentation"],
+            st.image(rotate_image(result["enhanced_segmentation"],
+                                  display_rotation),
                      caption="Experimental v5: Variegated / pale-edged "
                              "(not used for biomass)",
                      use_column_width=True)
@@ -1546,16 +1603,20 @@ with results_col:
                          result.get("previous_plant_number") else "Previous capture")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.image(thermal_preview(current_t, lo, hi),
+                    st.image(rotate_image(thermal_preview(current_t, lo, hi),
+                                          display_rotation),
                              caption=f"Current · {lo:.1f}–{hi:.1f} °C", use_column_width=True)
                 with c2:
-                    st.image(thermal_preview(previous_t, lo, hi),
+                    st.image(rotate_image(thermal_preview(previous_t, lo, hi),
+                                          display_rotation),
                              caption=f"{label} · same thermal scale", use_column_width=True)
             zp = result.get("optris_z_plan")
             if zp is not None:
                 st.caption(
                     f"Optris Z mode: {zp.get('mode', 'Off')} · proposed lowering: "
-                    f"{zp.get('lowering_mm', 0.0):.1f} mm · {zp.get('status', '')}"
+                    f"{zp.get('lowering_mm', 0.0):.1f} mm · "
+                    f"executed: {zp.get('applied_lowering_mm', 0.0):.1f} mm · "
+                    f"{zp.get('status', '')}"
                 )
                 if zp.get("median_plant_distance_mm") is not None:
                     st.caption(
@@ -1564,53 +1625,14 @@ with results_col:
                         f"{zp['estimated_optris_distance_mm']:.0f} mm"
                     )
                 if zp.get("mode") == "Automatic (experimental)":
-                    st.caption("Z retract to TOP verified: "
-                               + ("Yes" if result.get("z_retraction_confirmed") else "NO"))
+                    if zp.get("applied_lowering_mm", 0.0) >= 0.5:
+                        st.caption("Z retract to TOP verified: "
+                                   + ("Yes" if result.get("z_retraction_confirmed") else "NO"))
+                    else:
+                        st.caption("No Z lowering executed; thermal capture at top.")
             st.caption("Thermal pixels are not registered to RealSense pixels. "
                        "Capture times differ; the displayed temperature depends on emissivity and reflections.")
 
-        with st.expander("Interactive 3D · RealSense RGB point cloud", expanded=False):
-            st.caption("Rotate and zoom the RGB-coloured depth points. "
-                       "Coordinates are camera-relative; not a calibrated volume/biomass measurement.")
-            st.checkbox("Render point cloud", key="show_3d_view")
-            cloud_choice = st.selectbox(
-                "Show points", ["Full scene", "Original green mask", "Enhanced v5 mask"],
-                key="pointcloud_selection",
-            )
-            cloud_limit = st.slider("Maximum displayed 3D points",
-                                    min_value=3000, max_value=30000, value=18000, step=1000)
-            cloud_point_size = st.slider("3D point size (pixels)",
-                                         min_value=2, max_value=10, value=5)
-            cloud_max_depth = st.slider("Maximum depth shown (m)",
-                                        min_value=0.5, max_value=3.0,
-                                        value=2.0, step=0.1)
-            if st.session_state.show_3d_view:
-                try:
-                    mask_full = None
-                    if cloud_choice != "Full scene":
-                        small_mask = (result["mask"] if cloud_choice == "Original green mask"
-                                      else result["enhanced_mask"])
-                        mask_region = (result["roi_bounds"]
-                                       if cloud_choice == "Original green mask"
-                                       else result["enhanced_roi_bounds"])
-                        if mask_region is None:
-                            mask_full = small_mask
-                        else:
-                            top, bottom, left, right = mask_region
-                            mask_full = np.zeros_like(result["depth"], dtype=np.uint8)
-                            mask_full[top:bottom, left:right] = small_mask
-                    points = pointcloud_data(
-                        result["rgb"], result["depth"], result["color_intrinsics"],
-                        result["depth_scale_m_per_unit"], point_limit=cloud_limit,
-                        depth_range_m=(0.15, cloud_max_depth), mask=mask_full,
-                    )
-                    st.pydeck_chart(pointcloud_deck(points, point_size=cloud_point_size),
-                                    use_container_width=True)
-                    st.caption(f"{len(points):,} RGB-coloured depth points · "
-                               "camera-relative metres · drag to rotate, scroll to zoom. "
-                               "Initial view is auto-fitted; missing depth stays missing.")
-                except Exception as exc:
-                    st.warning(f"3D point cloud unavailable: {exc}")
 
 st.divider()
 with st.expander("Machine control, homing and manual jog", expanded=False):

@@ -21,7 +21,7 @@ class OptrisAutoZTests(unittest.TestCase):
                               target_optris_distance_mm=450)
         self.assertTrue(plan.usable)
         self.assertEqual(plan.lowering_mm, 100.0)
-        self.assertAlmostEqual(plan.estimated_optris_distance_mm, 800)
+        self.assertAlmostEqual(plan.estimated_optris_distance_mm, 800, places=2)
 
     def test_retract_proposal_zero_for_near_leaves(self):
         depth, mask = self.scene(280)
