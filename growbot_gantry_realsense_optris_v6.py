@@ -784,6 +784,10 @@ def perform_capture(plant_number: int | None,
                 raise RuntimeError("Automatic Z requires the gantry at top Z.")
             lower_mm = float(plan.lowering_mm)
 
+        if plan_report is not None:
+            # Distinguish the depth-based *proposal* from actual Z movement.
+            plan_report["applied_lowering_mm"] = lower_mm if lower_mm > 0 else 0.0
+
         # If a depth estimate is uncertain, remain at TOP and still acquire
         # thermal; a failed estimate can never cause an unsupported motion.
         descended = False
@@ -1612,7 +1616,9 @@ with results_col:
             if zp is not None:
                 st.caption(
                     f"Optris Z mode: {zp.get('mode', 'Off')} · proposed lowering: "
-                    f"{zp.get('lowering_mm', 0.0):.1f} mm · {zp.get('status', '')}"
+                    f"{zp.get('lowering_mm', 0.0):.1f} mm · "
+                    f"executed: {zp.get('applied_lowering_mm', 0.0):.1f} mm · "
+                    f"{zp.get('status', '')}"
                 )
                 if zp.get("median_plant_distance_mm") is not None:
                     st.caption(
@@ -1621,8 +1627,11 @@ with results_col:
                         f"{zp['estimated_optris_distance_mm']:.0f} mm"
                     )
                 if zp.get("mode") == "Automatic (experimental)":
-                    st.caption("Z retract to TOP verified: "
-                               + ("Yes" if result.get("z_retraction_confirmed") else "NO"))
+                    if zp.get("applied_lowering_mm", 0.0) >= 0.5:
+                        st.caption("Z retract to TOP verified: "
+                                   + ("Yes" if result.get("z_retraction_confirmed") else "NO"))
+                    else:
+                        st.caption("No Z lowering executed; thermal capture at top.")
             st.caption("Thermal pixels are not registered to RealSense pixels. "
                        "Capture times differ; the displayed temperature depends on emissivity and reflections.")
 
