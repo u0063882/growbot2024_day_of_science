@@ -44,7 +44,7 @@ def rotate_pointcloud_xy(points, degrees: int):
 
 def depth_limits_m(depth: np.ndarray, depth_scale_m: float,
                    mode: str = "Fixed range",
-                   fixed_range_m: tuple[float, float] = (0.35, 1.25)
+                   fixed_range_m: tuple[float, float] = (0.35, 0.50)
                    ) -> tuple[float, float]:
     """Choose display-only near/far colour limits, without modifying depth."""
     if depth.ndim != 2 or depth_scale_m <= 0 or not np.isfinite(depth_scale_m):
